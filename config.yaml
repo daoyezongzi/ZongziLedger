@@ -1,0 +1,77 @@
+﻿prefix: "#记账"
+record_start_marker: "记账"
+record_end_marker: "结束"
+
+capture_mode: "auto"
+capture_backend: "win32_memory"
+
+# 范围控制: today_new=当天同一条原始记账块只入账一次，all=不过滤
+capture_scope: "all"
+capture_state_dir: "data"
+deduplicate_within_run: false
+show_item_totals: true
+item_totals_top_n: 20
+
+# 日结模式：每天手动运行一次，首次运行先初始化历史基线（不写账）
+daily_settlement_mode: true
+daily_settlement_state_path: "data/daily_settlement_state.json"
+daily_recent_message_limit: 3
+daily_seen_retention_days: 30
+daily_force_reinitialize: false
+
+# 业务单号规则：强制首行格式为 #记账26050101（yymmdd + 两位序号）
+order_id_required: true
+order_id_digits: 8
+order_id_require_hash: true
+
+# 仅按“同hash + 时间窗口”判定是否同一笔
+message_hash_dedupe_enabled: true
+message_hash_window_seconds: 120
+message_hash_state_path: "data/message_hash_state.json"
+message_hash_state_retention_seconds: 604800
+
+# 同时输出 JSON 明细文件（按单号聚合）
+json_output_enabled: true
+json_output_path: "data/ledger_details.json"
+json_output_append_history: true
+
+log_dir: "logs"
+data_path: "data/ledger.csv"
+max_messages: 30
+
+wechat_class_name: "Qt51514QWindowIcon"
+wechat_window_name: "微信"
+wechat_window_control_type: "Window"
+wechat_window_focusable: true
+
+message_list_name: "消息"
+message_pane_name: "Weixin"
+message_pane_class_name: "MMUIRenderSubWindowHW"
+
+win32_clipboard_attempts: 3
+win32_clipboard_wait_seconds: 0.8
+win32_clipboard_click_ratio_x: 0.56
+
+wechat_class_names:
+  - "Qt51514QWindowIcon"
+  - "WeChatMainWndForPC"
+wechat_window_names:
+  - "微信"
+message_list_names:
+  - "消息"
+message_pane_names:
+  - "Weixin"
+message_pane_class_names:
+  - "MMUIRenderSubWindowHW"
+
+# Win32 内存抓取质量控制
+win32_memory_overlap_bytes: 4096
+win32_memory_max_chunk_bytes: 2097152
+win32_memory_recent_blocks: 6
+win32_memory_max_block_chars: 600
+win32_memory_min_payload_lines: 2
+win32_memory_max_payload_lines: 40
+win32_memory_min_valid_line_ratio: 0.8
+
+# 若你把日期也写在“记账...结束”块里，可设为 true 仅保留包含当天日期标记的块
+win32_memory_require_today_token: false

@@ -1,0 +1,40 @@
+﻿# Local environment
+.env
+.env.*
+!.env.example
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Virtual envs
+.venv/
+.venv*/
+
+# Local temp
+.tmp/
+.pip_temp/
+.git-codex/
+local_cleanup_quarantine/
+
+# Runtime output / local states
+logs/
+data/*.local.csv
+data/*.local.json
+data/daily_settlement_state*.json
+data/message_hash_state*.json
+data/ledger_details*.json
+
+# Optional: keep main csv tracked only if needed
+# data/ledger.csv
+
+# Local diagnostics / one-off probes
+gcm-diagnose.log
+.git_acl_backup.txt
+write_test_*.txt
+gitfile_backup_for_delete.txt
+gitcodex_backup_for_delete/
+codex_write_probe/
+
+# Nested export repo (avoid polluting root commits)
+publish_repo/
