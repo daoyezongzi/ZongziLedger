@@ -35,6 +35,3 @@ write_test_*.txt
 gitfile_backup_for_delete.txt
 gitcodex_backup_for_delete/
 codex_write_probe/
-
-# Nested export repo (avoid polluting root commits)
-publish_repo/

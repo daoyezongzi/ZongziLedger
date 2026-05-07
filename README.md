@@ -116,12 +116,15 @@ python main.py
 - `MAX_MESSAGES=30` -> `max_messages`
 - `DATA_PATH=data/ledger.local.csv` -> `data_path`
 - `DAILY_SETTLEMENT_MODE=true` -> `daily_settlement_mode`
+- `WECHAT_WINDOW_NAME=微信` -> `wechat_window_name`
+- `MESSAGE_PANE_CLASS_NAME=MMUIRenderSubWindowHW` -> `message_pane_class_name`
 
 建议：
 
 - 上传仓库时保留 `config.yaml` 与 `.env.example`；
 - 本地机器使用 `.env`；
 - `.env` 已加入 `.gitignore`，避免误提交。
+- 机器相关参数（窗口类名、窗口标题、本地输出路径）优先放 `.env`，不要写死到仓库配置。
 
 ## 关键配置（config.yaml）
 
@@ -134,10 +137,12 @@ capture_mode: "auto"
 capture_backend: "win32_memory"
 
 capture_scope: "all"
+capture_state_dir: "data"
 deduplicate_within_run: false
+show_item_totals: true
+item_totals_top_n: 20
 
 daily_settlement_mode: true
-daily_settlement_state_path: "data/daily_settlement_state.json"
 daily_recent_message_limit: 3
 daily_seen_retention_days: 30
 daily_force_reinitialize: false
@@ -148,15 +153,21 @@ order_id_require_hash: true
 
 message_hash_dedupe_enabled: true
 message_hash_window_seconds: 120
-message_hash_state_path: "data/message_hash_state.json"
+message_hash_state_retention_seconds: 604800
 
 json_output_enabled: true
-json_output_path: "data/ledger_details.json"
 json_output_append_history: true
 
-data_path: "data/ledger.csv"
-log_dir: "logs"
 max_messages: 30
+
+win32_memory_overlap_bytes: 4096
+win32_memory_max_chunk_bytes: 2097152
+win32_memory_recent_blocks: 6
+win32_memory_max_block_chars: 600
+win32_memory_min_payload_lines: 2
+win32_memory_max_payload_lines: 40
+win32_memory_min_valid_line_ratio: 0.8
+win32_memory_require_today_token: false
 ```
 
 配置说明：
