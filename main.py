@@ -13,13 +13,43 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
 
+from core.constants import (
+    DEFAULT_CAPTURE_BACKEND,
+    DEFAULT_CAPTURE_MODE,
+    DEFAULT_CAPTURE_SCOPE,
+    DEFAULT_CAPTURE_STATE_DIR,
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_DATA_PATH,
+    DEFAULT_DIFY_APPLY_CAPTURE_SCOPE,
+    DEFAULT_DIFY_USE_DAILY_SETTLEMENT,
+    DEFAULT_DIFY_USE_HASH_TIME_WINDOW,
+    DEFAULT_DOTENV_PATH,
+    DEFAULT_JSON_OUTPUT_PATH,
+    DEFAULT_KNOWN_STORE_LOOKUP_ENABLED,
+    DEFAULT_KNOWN_STORE_LOOKUP_MAX_MATCHES,
+    DEFAULT_KNOWN_STORE_LOOKUP_PATH,
+    DEFAULT_LOG_DIR,
+    DEFAULT_LOG_FILE_PREFIX,
+    DEFAULT_LOGGER_NAME,
+    DEFAULT_MANUAL_END_TOKEN,
+    DEFAULT_MANUAL_ORDER_ID_SAMPLE,
+    DEFAULT_MAX_MESSAGES,
+    DEFAULT_MESSAGE_HASH_STATE_PATH,
+    DEFAULT_ORDER_ID_DIGITS,
+    DEFAULT_ORDER_ID_REQUIRE_HASH,
+    DEFAULT_PREFIX,
+    DEFAULT_START_MARKER,
+    resolve_end_marker,
+    resolve_start_marker,
+)
 from core.monitor import MonitorError, fetch_recent_messages
 from core.monitor_win32 import Win32MonitorError, fetch_recent_messages_win32_clipboard
 from core.monitor_win32_memory import (
     Win32MemoryMonitorError,
     fetch_recent_messages_win32_memory,
 )
-from core.parser import END_MARKER_DEFAULT, parse_messages
+from core.parser import parse_messages
+from core.store_lookup import annotate_records_with_known_stores, build_known_store_lookup
 from setup import check_environment
 
 CSV_HEADERS = [
@@ -46,7 +76,7 @@ INT_TEXT_RE = re.compile(r"^[+-]?\d+$")
 FLOAT_TEXT_RE = re.compile(r"^[+-]?\d+\.\d+$")
 
 
-def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     """读取 YAML 配置。"""
     import yaml
 
@@ -60,7 +90,7 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     return config
 
 
-def load_dotenv(env_path: str = ".env") -> Dict[str, str]:
+def load_dotenv(env_path: str = DEFAULT_DOTENV_PATH) -> Dict[str, str]:
     """读取 .env 文件（轻量解析，不依赖 python-dotenv）。"""
     path = Path(env_path)
     if not path.exists():
@@ -136,6 +166,15 @@ def apply_dotenv_overrides(config: Dict[str, Any], env_data: Dict[str, str]) -> 
     return result, applied
 
 
+def load_runtime_config(
+    config_path: str = DEFAULT_CONFIG_PATH,
+    env_path: str = DEFAULT_DOTENV_PATH,
+) -> Tuple[Dict[str, Any], int]:
+    config = load_config(config_path)
+    dotenv_data = load_dotenv(env_path)
+    return apply_dotenv_overrides(config, dotenv_data)
+
+
 def ensure_csv_file(csv_path: Path) -> None:
     """确保数据目录与 CSV 文件存在，且含表头。"""
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,7 +204,12 @@ def ensure_csv_file(csv_path: Path) -> None:
                 {
                     "timestamp": _sanitize_csv_text(row.get("timestamp", "")),
                     "order_id": _sanitize_csv_text(row.get("order_id", ""))
-                    or _extract_order_id_from_message(raw_message, "记账", 8, True),
+                    or _extract_order_id_from_message(
+                        raw_message,
+                        DEFAULT_START_MARKER,
+                        DEFAULT_ORDER_ID_DIGITS,
+                        DEFAULT_ORDER_ID_REQUIRE_HASH,
+                    ),
                     "item": _sanitize_csv_text(row.get("item", "")),
                     "amount": row.get("amount", 0),
                     "raw_message": raw_message,
@@ -185,20 +229,26 @@ def ensure_csv_file(csv_path: Path) -> None:
 
 def init_run_logger(config: Dict[str, Any]) -> Tuple[logging.Logger, Path]:
     """初始化本次运行日志文件。"""
-    log_dir = Path(str(config.get("log_dir", "logs")))
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    log_path = log_dir / f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    logger = logging.getLogger(f"zongziledger.{log_path.stem}")
+    log_dir = Path(str(config.get("log_dir", DEFAULT_LOG_DIR)))
+    log_path = log_dir / f"{DEFAULT_LOG_FILE_PREFIX}{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.log"
+    logger = logging.getLogger(f"{DEFAULT_LOGGER_NAME}.{log_path.stem}")
     logger.setLevel(logging.INFO)
     logger.propagate = False
 
     logger.handlers.clear()
-    file_handler = logging.FileHandler(log_path, encoding="utf-8-sig")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    logger.addHandler(file_handler)
-
-    return logger, log_path
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path, encoding="utf-8-sig")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logger.addHandler(file_handler)
+        return logger, log_path
+    except Exception:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logger.addHandler(stream_handler)
+        fallback = Path("[stdout]")
+        logger.warning(f"[MAIN] 无法写入日志文件，已降级输出到 stdout。target={log_path}")
+        return logger, fallback
 
 
 def _is_admin() -> bool:
@@ -243,7 +293,7 @@ def _today_text() -> str:
 
 
 def _build_order_header_pattern(start_marker: str, digits: int, require_hash: bool) -> re.Pattern[str]:
-    marker = re.escape((start_marker or "记账").strip() or "记账")
+    marker = re.escape((start_marker or DEFAULT_START_MARKER).strip() or DEFAULT_START_MARKER)
     d = max(1, int(digits))
     if require_hash:
         return re.compile(rf"^[#＃]{marker}(\d{{{d}}})$")
@@ -265,8 +315,8 @@ def _is_valid_order_id_ymd_seq(order_id: str) -> bool:
 def _extract_order_id_from_message(
     message_text: str,
     start_marker: str,
-    order_id_digits: int = 8,
-    require_hash: bool = True,
+    order_id_digits: int = DEFAULT_ORDER_ID_DIGITS,
+    require_hash: bool = DEFAULT_ORDER_ID_REQUIRE_HASH,
 ) -> str:
     text = _sanitize_csv_text(message_text)
     if not text:
@@ -287,8 +337,8 @@ def _extract_order_id_from_message(
 def _mark_messages(
     messages: List[Dict[str, str]],
     start_marker: str,
-    order_id_digits: int = 8,
-    require_hash: bool = True,
+    order_id_digits: int = DEFAULT_ORDER_ID_DIGITS,
+    require_hash: bool = DEFAULT_ORDER_ID_REQUIRE_HASH,
 ) -> List[Dict[str, str]]:
     """为抓取消息补充 message_hash 与 message_captured_at 标记。"""
     marked: List[Dict[str, str]] = []
@@ -575,12 +625,12 @@ def filter_today_new_messages(
     messages: List[Dict[str, str]], config: Dict[str, Any], trace: TraceFn = None
 ) -> List[Dict[str, str]]:
     """当天范围过滤：同一天内，同一条原始消息只抓取一次。"""
-    scope = str(config.get("capture_scope", "today_new")).strip().lower()
+    scope = str(config.get("capture_scope", DEFAULT_CAPTURE_SCOPE)).strip().lower()
     if scope in {"all", "none", "off"}:
         return messages
 
     today_key = datetime.now().strftime("%Y-%m-%d")
-    state_dir = Path(str(config.get("capture_state_dir", "data")))
+    state_dir = Path(str(config.get("capture_state_dir", DEFAULT_CAPTURE_STATE_DIR)))
     state_path = state_dir / "seen_messages_today.json"
     seen = _load_today_seen_messages(state_path, today_key)
 
@@ -794,10 +844,12 @@ def filter_messages_by_hash_time_window(
     if not messages:
         return []
 
-    start_marker = str(config.get("record_start_marker", config.get("prefix", "记账"))).strip()
-    start_marker = start_marker.lstrip("#＃").strip() or "记账"
-    order_id_digits = _to_int(config.get("order_id_digits", 8), 8, minimum=1)
-    require_hash = _to_bool(config.get("order_id_require_hash", True), True)
+    start_marker = resolve_start_marker(config)
+    order_id_digits = _to_int(config.get("order_id_digits", DEFAULT_ORDER_ID_DIGITS), DEFAULT_ORDER_ID_DIGITS, minimum=1)
+    require_hash = _to_bool(
+        config.get("order_id_require_hash", DEFAULT_ORDER_ID_REQUIRE_HASH),
+        DEFAULT_ORDER_ID_REQUIRE_HASH,
+    )
     marked_messages = _mark_messages(
         messages,
         start_marker=start_marker,
@@ -824,7 +876,7 @@ def filter_messages_by_hash_time_window(
         7 * 24 * 3600,
         minimum=0,
     )
-    state_path = Path(str(config.get("message_hash_state_path", "data/message_hash_state.json")))
+    state_path = Path(str(config.get("message_hash_state_path", DEFAULT_MESSAGE_HASH_STATE_PATH)))
 
     state = _load_hash_state(state_path)
     now_epoch = int(datetime.now().timestamp())
@@ -860,6 +912,216 @@ def filter_messages_by_hash_time_window(
         )
 
     return filtered
+
+
+def _normalize_input_messages(
+    messages: List[Dict[str, str]],
+    default_source_id: str = "local",
+) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    source_default = _sanitize_csv_text(default_source_id) or "local"
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        raw_message = _sanitize_csv_text(message.get("message", ""))
+        if not raw_message:
+            continue
+
+        copied = dict(message)
+        copied["message"] = raw_message
+        copied["timestamp"] = _sanitize_csv_text(message.get("timestamp", "")) or now_text
+        copied["source_id"] = _sanitize_csv_text(message.get("source_id", "")) or source_default
+
+        message_hash = _sanitize_csv_text(message.get("message_hash", ""))
+        if message_hash:
+            copied["message_hash"] = message_hash
+
+        captured_at = _sanitize_csv_text(message.get("message_captured_at", ""))
+        if captured_at:
+            copied["message_captured_at"] = captured_at
+
+        normalized.append(copied)
+
+    return normalized
+
+
+def process_ledger_messages(
+    raw_messages: List[Dict[str, str]],
+    config: Dict[str, Any],
+    trace: TraceFn = None,
+    workflow: str = "capture",
+) -> Dict[str, Any]:
+    workflow_mode = str(workflow or "capture").strip().lower()
+    start_marker = resolve_start_marker(config)
+    end_marker = resolve_end_marker(config)
+    data_path = Path(str(config.get("data_path", DEFAULT_DATA_PATH)))
+    ensure_csv_file(data_path)
+
+    normalized_raw = _normalize_input_messages(
+        raw_messages,
+        default_source_id="dify" if workflow_mode == "dify" else "capture",
+    )
+
+    if workflow_mode == "dify":
+        apply_scope_filter = _to_bool(
+            config.get("dify_apply_capture_scope", DEFAULT_DIFY_APPLY_CAPTURE_SCOPE),
+            DEFAULT_DIFY_APPLY_CAPTURE_SCOPE,
+        )
+        daily_mode = _to_bool(
+            config.get("dify_use_daily_settlement", DEFAULT_DIFY_USE_DAILY_SETTLEMENT),
+            DEFAULT_DIFY_USE_DAILY_SETTLEMENT,
+        )
+        use_hash_window = _to_bool(
+            config.get("dify_use_hash_time_window", DEFAULT_DIFY_USE_HASH_TIME_WINDOW),
+            DEFAULT_DIFY_USE_HASH_TIME_WINDOW,
+        )
+    else:
+        apply_scope_filter = True
+        daily_mode = _to_bool(config.get("daily_settlement_mode", False), False)
+        use_hash_window = True
+
+    if apply_scope_filter:
+        scoped_messages = filter_today_new_messages(normalized_raw, config, trace=trace)
+    else:
+        scoped_messages = normalized_raw
+        if trace:
+            trace(f"[MAIN] 已跳过capture_scope过滤(workflow={workflow_mode})")
+    if trace:
+        trace(f"[MAIN] 范围过滤后消息数={len(scoped_messages)}")
+
+    order_id_digits = _to_int(config.get("order_id_digits", DEFAULT_ORDER_ID_DIGITS), DEFAULT_ORDER_ID_DIGITS, minimum=1)
+    require_hash = _to_bool(
+        config.get("order_id_require_hash", DEFAULT_ORDER_ID_REQUIRE_HASH),
+        DEFAULT_ORDER_ID_REQUIRE_HASH,
+    )
+
+    initialized_now = False
+    if daily_mode:
+        marked_messages = _mark_messages(
+            scoped_messages,
+            start_marker=start_marker,
+            order_id_digits=order_id_digits,
+            require_hash=require_hash,
+        )
+        ignored_count = len(scoped_messages) - len(marked_messages)
+        if ignored_count > 0 and trace:
+            trace(f"[MAIN] 日结模式忽略未携带有效单号消息数={ignored_count}")
+        messages_for_parse, initialized_now = apply_daily_settlement_mode(marked_messages, config, trace=trace)
+        if trace:
+            trace(f"[MAIN] 日结筛选后消息数={len(messages_for_parse)}")
+    else:
+        if use_hash_window:
+            messages_for_parse = filter_messages_by_hash_time_window(scoped_messages, config, trace=trace)
+            if trace:
+                trace(f"[MAIN] hash时间窗过滤后消息数={len(messages_for_parse)}")
+        else:
+            messages_for_parse = _mark_messages(
+                scoped_messages,
+                start_marker=start_marker,
+                order_id_digits=order_id_digits,
+                require_hash=require_hash,
+            )
+            if trace:
+                trace(f"[MAIN] 已跳过hash时间窗过滤(workflow={workflow_mode}), marked={len(messages_for_parse)}")
+
+    known_store_lookup = build_known_store_lookup(
+        config,
+        enabled_key="known_store_lookup_enabled",
+        path_key="known_store_lookup_path",
+        default_enabled=DEFAULT_KNOWN_STORE_LOOKUP_ENABLED,
+        default_path=DEFAULT_KNOWN_STORE_LOOKUP_PATH,
+        trace=trace,
+    )
+    known_store_hits = 0
+
+    if initialized_now:
+        return {
+            "status": "initialized",
+            "workflow": workflow_mode,
+            "initialized_now": True,
+            "start_marker": start_marker,
+            "end_marker": end_marker,
+            "input_messages_count": len(normalized_raw),
+            "scoped_messages_count": len(scoped_messages),
+            "messages_for_parse_count": len(messages_for_parse),
+            "parsed_records_count": 0,
+            "unique_records_count": 0,
+            "written_records_count": 0,
+            "json_output_enabled": _to_bool(config.get("json_output_enabled", True), True),
+            "json_written_bills": 0,
+            "data_path": str(data_path),
+            "json_path": str(config.get("json_output_path", DEFAULT_JSON_OUTPUT_PATH)),
+            "known_store_lookup_enabled": bool(known_store_lookup.get("enabled", False)),
+            "known_store_hits": 0,
+            "records": [],
+            "bills": [],
+        }
+
+    parsed_records = parse_messages(messages_for_parse, start_marker, end_marker=end_marker)
+    known_store_hits = annotate_records_with_known_stores(
+        parsed_records,
+        known_store_lookup,
+        max_matches=_to_int(
+            config.get("known_store_lookup_max_matches", DEFAULT_KNOWN_STORE_LOOKUP_MAX_MATCHES),
+            DEFAULT_KNOWN_STORE_LOOKUP_MAX_MATCHES,
+            minimum=1,
+        ),
+    )
+    if trace:
+        trace(f"[MAIN] 解析后记录数={len(parsed_records)}")
+        if known_store_lookup.get("enabled", False):
+            trace(
+                f"[MAIN] 店铺直查命中记录数={known_store_hits}, stores={known_store_lookup.get('stores_count', 0)}"
+            )
+
+    deduplicate_within_run = _to_bool(config.get("deduplicate_within_run", True), True)
+    if deduplicate_within_run:
+        unique_records = deduplicate_records(parsed_records)
+        if trace:
+            trace(f"[MAIN] 单次去重后记录数={len(unique_records)}")
+    else:
+        unique_records = parsed_records
+        if trace:
+            trace(f"[MAIN] 已关闭单次去重，记录数={len(unique_records)}")
+
+    written_records = write_records(data_path, unique_records)
+    if trace:
+        trace(f"[MAIN] 数据已写入={data_path}, written_records={written_records}")
+
+    json_output_enabled = _to_bool(config.get("json_output_enabled", True), True)
+    bills: List[Dict[str, Any]] = []
+    json_path: Optional[Path] = None
+    json_written_bills = 0
+    if json_output_enabled:
+        json_path = Path(str(config.get("json_output_path", DEFAULT_JSON_OUTPUT_PATH)))
+        append_history = _to_bool(config.get("json_output_append_history", True), True)
+        bills = build_bill_payloads(unique_records)
+        json_written_bills = write_bill_json_output(json_path, bills, append_history=append_history)
+        if trace:
+            trace(f"[MAIN] JSON已写入={json_path}, bills={json_written_bills}")
+
+    return {
+        "status": "ok",
+        "workflow": workflow_mode,
+        "initialized_now": False,
+        "start_marker": start_marker,
+        "end_marker": end_marker,
+        "input_messages_count": len(normalized_raw),
+        "scoped_messages_count": len(scoped_messages),
+        "messages_for_parse_count": len(messages_for_parse),
+        "parsed_records_count": len(parsed_records),
+        "unique_records_count": len(unique_records),
+        "written_records_count": written_records,
+        "json_output_enabled": json_output_enabled,
+        "json_written_bills": json_written_bills,
+        "data_path": str(data_path),
+        "json_path": str(json_path) if json_path is not None else "",
+        "known_store_lookup_enabled": bool(known_store_lookup.get("enabled", False)),
+        "known_store_hits": known_store_hits,
+        "records": unique_records,
+        "bills": bills,
+    }
 
 
 def write_records(csv_path: Path, records: List[Dict[str, Any]]) -> int:
@@ -901,6 +1163,7 @@ def build_bill_payloads(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if bill is None:
             bill = {
                 "order_id": order_id,
+                "name": _sanitize_csv_text(record.get("name", "")),
                 "message_hash": message_hash,
                 "message_captured_at": _sanitize_csv_text(record.get("message_captured_at", "")),
                 "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -910,6 +1173,8 @@ def build_bill_payloads(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "items": [],
             }
             bills[bill_key] = bill
+        elif not _sanitize_csv_text(bill.get("name", "")):
+            bill["name"] = _sanitize_csv_text(record.get("name", ""))
 
         bill["items"].append(
             {
@@ -960,7 +1225,10 @@ def write_bill_json_output(
 
 def _build_manual_messages(start_marker: str) -> List[Dict[str, str]]:
     """抓取失败时允许手动粘贴一条记账消息。"""
-    print(f"[手动模式] 可粘贴一整条记账消息（首行必须类似 #{start_marker}26050101），输入单独一行 END 结束：")
+    print(
+        f"[手动模式] 可粘贴一整条记账消息（首行必须类似 #{start_marker}{DEFAULT_MANUAL_ORDER_ID_SAMPLE}），"
+        f"输入单独一行 {DEFAULT_MANUAL_END_TOKEN} 结束："
+    )
     lines: List[str] = []
 
     while True:
@@ -968,7 +1236,7 @@ def _build_manual_messages(start_marker: str) -> List[Dict[str, str]]:
             line = input()
         except EOFError:
             break
-        if line.strip().upper() == "END":
+        if line.strip().upper() == DEFAULT_MANUAL_END_TOKEN:
             break
         lines.append(line)
 
@@ -982,7 +1250,7 @@ def _build_manual_messages(start_marker: str) -> List[Dict[str, str]]:
 
 def _fetch_messages_auto(config: Dict[str, Any], trace: TraceFn = None) -> List[Dict[str, str]]:
     """自动抓取消息：支持 win32_memory / win32_clipboard / uia。"""
-    backend = str(config.get("capture_backend", "win32_memory")).strip().lower()
+    backend = str(config.get("capture_backend", DEFAULT_CAPTURE_BACKEND)).strip().lower()
     errors: List[str] = []
 
     def _try_win32_memory() -> Optional[List[Dict[str, str]]]:
@@ -1088,13 +1356,10 @@ def main() -> None:
         return
 
     try:
-        config = load_config("config.yaml")
+        config, dotenv_applied = load_runtime_config(DEFAULT_CONFIG_PATH, DEFAULT_DOTENV_PATH)
     except Exception as exc:
         print(f"[错误] 读取配置失败：{exc}")
         return
-
-    dotenv_data = load_dotenv(".env")
-    config, dotenv_applied = apply_dotenv_overrides(config, dotenv_data)
 
     logger, log_path = init_run_logger(config)
     trace = _make_trace(logger)
@@ -1102,19 +1367,15 @@ def main() -> None:
     trace(f"[MAIN] Python={sys.version}")
     trace(f"[MAIN] 管理员权限={'是' if _is_admin() else '否'}")
     trace(
-        f"[MAIN] 配置摘要: capture_mode={config.get('capture_mode', 'auto')}, prefix={config.get('prefix', '#记账')}, max_messages={config.get('max_messages', 30)}"
+        f"[MAIN] 配置摘要: capture_mode={config.get('capture_mode', DEFAULT_CAPTURE_MODE)}, "
+        f"prefix={config.get('prefix', DEFAULT_PREFIX)}, max_messages={config.get('max_messages', DEFAULT_MAX_MESSAGES)}"
     )
     if dotenv_applied > 0:
         trace(f"[MAIN] 已加载 .env 覆盖项数量={dotenv_applied}")
     print(f"[日志] 抓取日志文件：{log_path}")
 
-    data_path = Path(str(config.get("data_path", "data/ledger.csv")))
-    ensure_csv_file(data_path)
-
-    start_marker = str(config.get("record_start_marker", config.get("prefix", "记账"))).strip()
-    start_marker = start_marker.lstrip("#＃").strip() or "记账"
-    end_marker = str(config.get("record_end_marker", END_MARKER_DEFAULT)).strip() or END_MARKER_DEFAULT
-    capture_mode = str(config.get("capture_mode", "auto")).strip().lower()
+    start_marker = resolve_start_marker(config)
+    capture_mode = str(config.get("capture_mode", DEFAULT_CAPTURE_MODE)).strip().lower()
     raw_messages: List[Dict[str, str]]
 
     if capture_mode == "manual":
@@ -1127,11 +1388,11 @@ def main() -> None:
         try:
             raw_messages = _fetch_messages_auto(config, trace=trace)
             try:
-                inspected_count = int(config.get("max_messages", 30))
+                inspected_count = int(config.get("max_messages", DEFAULT_MAX_MESSAGES))
             except (TypeError, ValueError):
-                inspected_count = 30
+                inspected_count = DEFAULT_MAX_MESSAGES
             if inspected_count <= 0:
-                inspected_count = 30
+                inspected_count = DEFAULT_MAX_MESSAGES
             print(
                 f"[抓取] 已检查窗口最近 {inspected_count} 条消息，前缀 {start_marker} 命中 {len(raw_messages)} 条。"
             )
@@ -1147,56 +1408,22 @@ def main() -> None:
             print(f"[提示] 详细过程见日志：{log_path}")
             return
 
-    scoped_messages = filter_today_new_messages(raw_messages, config, trace=trace)
-    trace(f"[MAIN] 范围过滤后消息数={len(scoped_messages)}")
+    result = process_ledger_messages(raw_messages, config, trace=trace, workflow="capture")
+    data_path = Path(str(result.get("data_path") or config.get("data_path", DEFAULT_DATA_PATH)))
 
-    daily_mode = _to_bool(config.get("daily_settlement_mode", False), False)
-    if daily_mode:
-        order_id_digits = _to_int(config.get("order_id_digits", 8), 8, minimum=1)
-        require_hash = _to_bool(config.get("order_id_require_hash", True), True)
-        marked_messages = _mark_messages(
-            scoped_messages,
-            start_marker=start_marker,
-            order_id_digits=order_id_digits,
-            require_hash=require_hash,
-        )
-        ignored_count = len(scoped_messages) - len(marked_messages)
-        if ignored_count > 0:
-            trace(f"[MAIN] 日结模式忽略未携带有效单号消息数={ignored_count}")
-        daily_messages, initialized_now = apply_daily_settlement_mode(marked_messages, config, trace=trace)
-        trace(f"[MAIN] 日结筛选后消息数={len(daily_messages)}")
-        if initialized_now:
-            print("[日结初始化] 已建立历史基线。本次不写入账单，请下次运行开始正式结算。")
-            print(f"[提示] 详细过程见日志：{log_path}")
-            return
-        messages_for_parse = daily_messages
-    else:
-        messages_for_parse = filter_messages_by_hash_time_window(scoped_messages, config, trace=trace)
-        trace(f"[MAIN] hash时间窗过滤后消息数={len(messages_for_parse)}")
+    if _to_bool(result.get("initialized_now", False), False):
+        print("[日结初始化] 已建立历史基线。本次不写入账单，请下次运行开始正式结算。")
+        print(f"[提示] 详细过程见日志：{log_path}")
+        return
 
-    parsed_records = parse_messages(messages_for_parse, start_marker, end_marker=end_marker)
-    trace(f"[MAIN] 解析后记录数={len(parsed_records)}")
-
-    deduplicate_within_run = _to_bool(config.get("deduplicate_within_run", True), True)
-    if deduplicate_within_run:
-        unique_records = deduplicate_records(parsed_records)
-        trace(f"[MAIN] 单次去重后记录数={len(unique_records)}")
-    else:
-        unique_records = parsed_records
-        trace(f"[MAIN] 已关闭单次去重，记录数={len(unique_records)}")
-
-    write_records(data_path, unique_records)
-    trace(f"[MAIN] 数据已写入={data_path}")
+    unique_records = list(result.get("records", []))
     print_run_result(unique_records, data_path)
 
-    json_output_enabled = _to_bool(config.get("json_output_enabled", True), True)
+    json_output_enabled = _to_bool(result.get("json_output_enabled", False), False)
     if json_output_enabled:
-        json_path = Path(str(config.get("json_output_path", "data/ledger_details.json")))
-        append_history = _to_bool(config.get("json_output_append_history", True), True)
-        bills = build_bill_payloads(unique_records)
-        written = write_bill_json_output(json_path, bills, append_history=append_history)
-        trace(f"[MAIN] JSON已写入={json_path}, bills={written}")
-        print(f"[JSON] 本次输出 {written} 笔账单 -> {json_path}")
+        json_path_text = str(result.get("json_path", "") or "")
+        if json_path_text:
+            print(f"[JSON] 本次输出 {int(result.get('json_written_bills', 0))} 笔账单 -> {json_path_text}")
 
     show_totals = _to_bool(config.get("show_item_totals", True), True)
     if show_totals:

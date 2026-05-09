@@ -24,6 +24,8 @@ data/*.local.json
 data/daily_settlement_state*.json
 data/message_hash_state*.json
 data/ledger_details*.json
+data/review_queue*.jsonl
+data/dify_ingest_audit*.jsonl
 
 # Optional: keep main csv tracked only if needed
 # data/ledger.csv

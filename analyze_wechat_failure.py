@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from core.constants import DEFAULT_CONFIG_PATH, DEFAULT_PREFIX
+
 
 def _safe_import() -> Tuple[Any, Any]:
     try:
@@ -368,14 +370,14 @@ def build_summary(
 def main() -> None:
     yaml_mod, auto = _safe_import()
 
-    config_path = Path("config.yaml")
+    config_path = Path(DEFAULT_CONFIG_PATH)
     try:
         config = load_config(yaml_mod, config_path)
     except Exception as exc:
         print(f"[错误] 读取配置失败：{exc}")
         raise SystemExit(1)
 
-    prefix = str(config.get("prefix", "#记账")).strip()
+    prefix = str(config.get("prefix", DEFAULT_PREFIX)).strip()
     class_names = normalize_list(
         config.get("wechat_class_names", config.get("wechat_class_name", "WeChatMainWndForPC")),
         ["WeChatMainWndForPC"],

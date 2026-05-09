@@ -20,6 +20,10 @@ order_id_required: true
 order_id_digits: 8
 order_id_require_hash: true
 
+known_store_lookup_enabled: false
+known_store_lookup_path: "data/known_stores.local.json"
+known_store_lookup_max_matches: 3
+
 message_hash_dedupe_enabled: true
 message_hash_window_seconds: 120
 message_hash_state_retention_seconds: 604800
@@ -32,8 +36,42 @@ max_messages: 30
 win32_memory_overlap_bytes: 4096
 win32_memory_max_chunk_bytes: 2097152
 win32_memory_recent_blocks: 6
-win32_memory_max_block_chars: 600
+win32_memory_max_block_chars: 2000
 win32_memory_min_payload_lines: 2
 win32_memory_max_payload_lines: 40
 win32_memory_min_valid_line_ratio: 0.8
 win32_memory_require_today_token: false
+
+# Dify bridge (LLM -> local ledger pipeline)
+dify_api_host: "127.0.0.1"
+dify_api_port: 8787
+dify_ingest_url: ""
+dify_apply_capture_scope: false
+dify_use_daily_settlement: false
+dify_use_hash_time_window: true
+dify_audit_enabled: true
+dify_audit_path: "data/dify_ingest_audit.jsonl"
+dify_response_preview_limit: 20
+dify_ingest_timeout_seconds: 30
+dify_remote_enabled: true
+dify_remote_priority: true
+dify_remote_fallback_local: true
+dify_remote_api_url: ""
+dify_remote_api_key: ""
+dify_remote_timeout_seconds: 30
+dify_remote_response_mode: "blocking"
+dify_remote_user: "zongziledger-local"
+dify_remote_user_agent: "python-requests/2.32.3"
+dify_remote_input_payload_key: "payload_json"
+dify_remote_input_messages_key: "messages_json"
+dify_remote_inputs_as_json_text: true
+
+dify_listen_host: "127.0.0.1"
+dify_listen_port: 18888
+dify_ingest_path: "/api/dify/ingest"
+dify_health_path: "/api/health"
+dify_max_payload_bytes: 2097152
+dify_source_id: "dify"
+
+review_queue_enabled: true
+review_queue_path: "data/review_queue.jsonl"

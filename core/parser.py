@@ -7,12 +7,16 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.constants import DEFAULT_END_MARKER, DEFAULT_START_MARKER
 
-END_MARKER_DEFAULT = "结束"
+END_MARKER_DEFAULT = DEFAULT_END_MARKER
 
 TRIM_EDGE_RE = re.compile(r"^[,，;；:：|/\\\-~.。\s]+|[,，;；:：|/\\\-~.。\s]+$")
 SEPARATOR_ONLY_RE = re.compile(r"^[,，;；:：|/\\\-~.。\s]+$")
-COUNT_LINE_RE = re.compile(r"^(.+?)(?:\s*[xX*×]\s*|\s+)?(\d+(?:\.\d+)?)$")
+COUNT_LINE_RE = re.compile(
+    r"^(.+?)(?:\s*[xX*×]\s*|\s+)?(\d+(?:\.\d+)?)(?:\s*(?:件|包|袋|箱|瓶|听|支|条|盒|份|杯|个|桶|罐|斤|两|公斤|kg|KG|g|G|l|L|ml|ML|pcs|PCS))?$"
+)
+CATEGORY_HEADER_RE = re.compile(r"^(.+?)[：:]\s*$")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -72,7 +76,7 @@ def _extract_blocks(text: str, start_marker: str, end_marker: str) -> List[str]:
 
 
 def _build_order_header_pattern(start_marker: str, digits: int = 8) -> re.Pattern[str]:
-    marker = re.escape(start_marker or "记账")
+    marker = re.escape(start_marker or DEFAULT_START_MARKER)
     digit_count = max(1, int(digits))
     return re.compile(rf"^[#＃]{marker}(\d{{{digit_count}}})$")
 
@@ -106,28 +110,73 @@ def _split_block_lines(block_text: str) -> List[str]:
     return [line.strip() for line in block_text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
 
 
+def _normalize_payload_line(line: str) -> str:
+    return " ".join(str(line or "").replace("\t", " ").split()).strip()
+
+
+def _parse_count_line(line: str) -> Optional[Tuple[str, float]]:
+    cleaned = _trim_edge(_normalize_payload_line(line))
+    if not cleaned:
+        return None
+
+    matched = COUNT_LINE_RE.match(cleaned)
+    if not matched:
+        return None
+
+    item_raw, count_raw = matched.groups()
+    item = _trim_edge(" ".join(item_raw.strip().split()))
+    if not item:
+        return None
+
+    try:
+        count = float(count_raw)
+    except ValueError:
+        return None
+
+    return item, count
+
+
+def _extract_name_from_payload(payload_lines: List[str]) -> Tuple[str, List[str]]:
+    if not payload_lines:
+        return "", []
+
+    first_line = _normalize_payload_line(payload_lines[0])
+    if not first_line:
+        return "", payload_lines[1:]
+
+    if CATEGORY_HEADER_RE.fullmatch(first_line):
+        return "", payload_lines
+    if _parse_count_line(first_line) is not None:
+        return "", payload_lines
+    if SEPARATOR_ONLY_RE.fullmatch(_trim_edge(first_line)):
+        return "", payload_lines
+
+    # 约定：首个非数量行视为名字；未提供时保持空字符串。
+    return _trim_edge(first_line), payload_lines[1:]
+
+
 def _parse_payload_lines(payload_lines: List[str]) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
+    category_prefix = ""
     for line in payload_lines:
-        cleaned = _trim_edge(line)
-        if not cleaned:
+        normalized = _normalize_payload_line(line)
+        if not normalized:
             continue
-        if SEPARATOR_ONLY_RE.fullmatch(cleaned):
-            continue
-
-        matched = COUNT_LINE_RE.match(cleaned)
-        if not matched:
+        if SEPARATOR_ONLY_RE.fullmatch(_trim_edge(normalized)):
             continue
 
-        item_raw, count_raw = matched.groups()
-        item = _trim_edge(" ".join(item_raw.strip().split()))
-        if not item:
+        category_match = CATEGORY_HEADER_RE.fullmatch(normalized)
+        if category_match:
+            category_prefix = _trim_edge(category_match.group(1))
             continue
 
-        try:
-            count = float(count_raw)
-        except ValueError:
+        parsed = _parse_count_line(normalized)
+        if parsed is None:
             continue
+        item, count = parsed
+
+        if category_prefix and ("：" not in item and ":" not in item):
+            item = f"{category_prefix}：{item}"
 
         records.append({"item": item, "amount": count, "record_type": "count"})
 
@@ -138,28 +187,32 @@ def _parse_block(
     block_text: str,
     start_marker: str,
     end_marker: str,
-) -> Tuple[List[Dict[str, Any]], str, str]:
+) -> Tuple[List[Dict[str, Any]], str, str, str]:
     lines = _split_block_lines(block_text)
     if len(lines) < 3:
-        return [], "", ""
+        return [], "", "", ""
 
     order_id = _extract_order_id(lines[0], start_marker)
     if not order_id:
-        return [], "", ""
+        return [], "", "", ""
     if lines[-1] != end_marker:
-        return [], "", ""
+        return [], "", "", ""
 
     payload_lines = lines[1:-1]
     if not payload_lines:
-        return [], "", ""
+        return [], "", "", ""
 
-    parsed = _parse_payload_lines(payload_lines)
+    customer_name, payload_for_parse = _extract_name_from_payload(payload_lines)
+    if not payload_for_parse:
+        return [], "", "", ""
+
+    parsed = _parse_payload_lines(payload_for_parse)
     if not parsed:
-        return [], "", ""
+        return [], "", "", ""
 
     # Keep cleaned block as raw message so CSV never stores a full memory blob.
     cleaned_block = "\n".join(lines)
-    return parsed, cleaned_block, order_id
+    return parsed, cleaned_block, order_id, customer_name
 
 
 def parse_ledger_message(
@@ -184,7 +237,7 @@ def parse_ledger_message_multi(
 
     results: List[Dict[str, Any]] = []
     for block in blocks:
-        entries, cleaned_block, order_id = _parse_block(block, start_marker, end_marker)
+        entries, cleaned_block, order_id, customer_name = _parse_block(block, start_marker, end_marker)
         if not entries or not cleaned_block or not order_id:
             continue
 
@@ -196,6 +249,7 @@ def parse_ledger_message_multi(
                     "record_type": "count",
                     "raw_message": cleaned_block,
                     "order_id": order_id,
+                    "name": customer_name,
                 }
             )
 
@@ -221,11 +275,14 @@ def parse_messages(
         source_id = (msg.get("source_id") or "").strip()
         message_hash = (msg.get("message_hash") or "").strip()
         message_captured_at = (msg.get("message_captured_at") or "").strip()
+        message_name = (msg.get("name") or msg.get("customer_name") or "").strip()
         for parsed in parsed_list:
             parsed["timestamp"] = timestamp
             parsed["source_id"] = source_id
             parsed["message_hash"] = message_hash
             parsed["message_captured_at"] = message_captured_at
+            if not str(parsed.get("name", "")).strip():
+                parsed["name"] = message_name
             records.append(parsed)
 
     return records

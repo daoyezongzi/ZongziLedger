@@ -10,6 +10,15 @@ from ctypes import wintypes
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
+from core.constants import (
+    DEFAULT_END_MARKER,
+    DEFAULT_MAX_MESSAGES,
+    DEFAULT_ORDER_ID_DIGITS,
+    DEFAULT_ORDER_ID_REQUIRE_HASH,
+    DEFAULT_START_MARKER,
+    resolve_start_marker,
+)
+
 
 class Win32MemoryMonitorError(Exception):
     """Raised when Win32 memory capture cannot return usable ledger messages."""
@@ -33,7 +42,10 @@ DEFAULT_OVERLAP_BYTES = 4096
 
 CLEAN_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 TRIM_EDGE_RE = re.compile(r"^[,，;；:：|/\\\-~.。\s]+|[,，;；:：|/\\\-~.。\s]+$")
-COUNT_LINE_RE = re.compile(r"^(.+?)(?:\s*[xX*×]\s*|\s+)?(\d+(?:\.\d+)?)$")
+COUNT_LINE_RE = re.compile(
+    r"^(.+?)(?:\s*[xX*×]\s*|\s+)?(\d+(?:\.\d+)?)(?:\s*(?:件|包|袋|箱|瓶|听|支|条|盒|份|杯|个|桶|罐|斤|两|公斤|kg|KG|g|G|l|L|ml|ML|pcs|PCS))?$"
+)
+CATEGORY_HEADER_RE = re.compile(r"^(.+?)(?:\:|\uFF1A)\s*$")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
@@ -377,6 +389,17 @@ def _is_payload_line_valid(line: str) -> bool:
     return True
 
 
+def _is_payload_category_line(line: str) -> bool:
+    compact = _clean_edge(line.strip())
+    if not compact:
+        return False
+    if "\x00" in compact:
+        return False
+    if CLEAN_CONTROL_RE.search(compact):
+        return False
+    return CATEGORY_HEADER_RE.fullmatch(compact) is not None
+
+
 def _is_today_token_present(text: str) -> bool:
     today = datetime.now()
     tokens = [
@@ -391,7 +414,7 @@ def _is_today_token_present(text: str) -> bool:
 
 
 def _build_order_header_pattern(start_marker: str, digits: int = 8, require_hash: bool = True) -> re.Pattern[str]:
-    marker = re.escape((start_marker or "记账").strip() or "记账")
+    marker = re.escape((start_marker or DEFAULT_START_MARKER).strip() or DEFAULT_START_MARKER)
     d = max(1, int(digits))
     if require_hash:
         return re.compile(rf"^[#＃]{marker}(\d{{{d}}})$")
@@ -458,9 +481,15 @@ def _validate_block(
         return False, "payload_too_many"
 
     valid_line_count = sum(1 for line in payload_lines if _is_payload_line_valid(line))
+    category_line_count = sum(1 for line in payload_lines if _is_payload_category_line(line))
+    structural_count = valid_line_count + category_line_count
+    if valid_line_count <= 0:
+        return False, "payload_no_count_line"
+
     valid_ratio = valid_line_count / max(1, len(payload_lines))
     if valid_ratio < min_valid_ratio:
-        return False, "payload_invalid_ratio"
+        # 对 win32_memory 来说，payload 比例判定改为软告警，避免误杀真实长消息。
+        return True, f"payload_invalid_ratio_soft(valid={valid_line_count},struct={structural_count},total={len(payload_lines)})"
 
     if require_today_token and not _is_today_token_present(normalized):
         return False, "today_token_missing"
@@ -490,15 +519,14 @@ def _extract_candidates_from_blob(blob: bytes, start_marker: str, end_marker: st
 
 
 def fetch_recent_messages_win32_memory(config: Dict[str, Any], trace: TraceFn = None) -> List[Dict[str, str]]:
-    start_marker = str(config.get("record_start_marker", config.get("prefix", "记账"))).strip()
-    start_marker = start_marker.lstrip("#＃").strip() or "记账"
-    end_marker = str(config.get("record_end_marker", "结束")).strip()
+    start_marker = resolve_start_marker(config)
+    end_marker = str(config.get("record_end_marker", DEFAULT_END_MARKER)).strip() or DEFAULT_END_MARKER
     if not start_marker or not end_marker:
         raise Win32MemoryMonitorError("开始或结束标记不能为空。")
 
-    max_messages = _safe_int(config.get("max_messages", 30), 30)
+    max_messages = _safe_int(config.get("max_messages", DEFAULT_MAX_MESSAGES), DEFAULT_MAX_MESSAGES)
     if max_messages <= 0:
-        max_messages = 30
+        max_messages = DEFAULT_MAX_MESSAGES
 
     class_names = _to_str_list(
         config.get("wechat_class_names", config.get("wechat_class_name", "Qt51514QWindowIcon")),
@@ -521,15 +549,18 @@ def fetch_recent_messages_win32_memory(config: Dict[str, Any], trace: TraceFn = 
     if recent_blocks <= 0:
         recent_blocks = max(max_messages, 6)
 
-    max_block_chars = _safe_int(config.get("win32_memory_max_block_chars", 600), 600)
+    max_block_chars = _safe_int(config.get("win32_memory_max_block_chars", 2000), 2000)
     min_payload_lines = _safe_int(config.get("win32_memory_min_payload_lines", 2), 2)
     max_payload_lines = _safe_int(config.get("win32_memory_max_payload_lines", 40), 40)
     min_valid_ratio = _safe_float(config.get("win32_memory_min_valid_line_ratio", 0.8), 0.8)
     min_valid_ratio = min(max(min_valid_ratio, 0.0), 1.0)
     require_today_token = _safe_bool(config.get("win32_memory_require_today_token", False), False)
     require_order_header = _safe_bool(config.get("order_id_required", True), True)
-    order_id_digits = _safe_int(config.get("order_id_digits", 8), 8)
-    order_id_require_hash = _safe_bool(config.get("order_id_require_hash", True), True)
+    order_id_digits = _safe_int(config.get("order_id_digits", DEFAULT_ORDER_ID_DIGITS), DEFAULT_ORDER_ID_DIGITS)
+    order_id_require_hash = _safe_bool(
+        config.get("order_id_require_hash", DEFAULT_ORDER_ID_REQUIRE_HASH),
+        DEFAULT_ORDER_ID_REQUIRE_HASH,
+    )
     header_pattern = (
         _build_order_header_pattern(start_marker, order_id_digits, order_id_require_hash)
         if require_order_header
@@ -576,6 +607,7 @@ def fetch_recent_messages_win32_memory(config: Dict[str, Any], trace: TraceFn = 
         raw_candidates = 0
         rejected = 0
         rejected_reasons: Counter[str] = Counter()
+        soft_reasons: Counter[str] = Counter()
 
         best_by_block: Dict[str, Dict[str, Any]] = {}
 
@@ -620,6 +652,8 @@ def fetch_recent_messages_win32_memory(config: Dict[str, Any], trace: TraceFn = 
                         rejected += 1
                         rejected_reasons[reason] += 1
                         continue
+                    if reason != "ok":
+                        soft_reasons[reason] += 1
 
                     approx_address = combined_base_address + max(0, local_index)
                     existing = best_by_block.get(block)
@@ -650,6 +684,8 @@ def fetch_recent_messages_win32_memory(config: Dict[str, Any], trace: TraceFn = 
         )
         if rejected_reasons:
             _trace(trace, f"[WIN32MEM] 拒绝原因统计: {dict(rejected_reasons)}")
+        if soft_reasons:
+            _trace(trace, f"[WIN32MEM] 软告警统计: {dict(soft_reasons)}")
 
         if selected_blocks:
             sample_blocks = [str(item.get("text", "")) for item in selected_blocks[:3]]
