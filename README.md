@@ -28,6 +28,25 @@
 
 另外，`WETRACE_KEYWORD` 是“消息内容过滤关键词”，不是群绑定参数。
 
+### `WETRACE_TALKER_ID` 推荐获取方式（按我们当前流程）
+
+1. 先在 `.env` 里填写群关键词，不先写死 ID：
+   - `WETRACE_TALKER_KEYWORD=你的群名关键词`
+   - `WETRACE_TALKER_ID=`（留空）
+2. 运行一次：
+
+```bat
+run_ingest_wetrace.bat
+```
+
+3. 打开本次运行日志（控制台最后会打印 `[LOG] ...` 路径），查这行：
+   - `[WETRACE] talker resolve keyword=..., chosen_id=..., chosen_name=...`
+4. 把 `chosen_id` 回填到 `.env` 的 `WETRACE_TALKER_ID`，后续固定用 ID 绑定（最稳）。
+
+补充：
+- 现在已兼容群聊 ID 常见格式差异（例如有无 `@chatroom` 后缀），不会因为这种格式差异被误判 `talker_mismatch`。
+- `WETRACE_TALKER_KEYWORD` 适合“找群”，`WETRACE_TALKER_ID` 适合“长期稳定绑定群”。
+
 ## 3. 补全业务字典
 
 按你的业务维护这三个本地字典：
@@ -41,6 +60,12 @@
 - 当前账单消息主要是“店名 + 内容”格式，所以本项目使用字典强绑定来做稳定识别（优先依赖店名字典，再结合品名/规格字典）。
 - 这是一套确定性规则，不依赖临场猜测，目的是减少误识别。
 - 如果后续你有新的识别规则需求（例如新的消息模板、额外字段、不同结算口径），目前这部分还没实现，需要后续再扩展。
+
+硬性要求（必须先做）：
+
+- 在运行任何 BAT 前，必须先维护好本地字典（至少先维护 `known_stores.local.json` 和 `products.local.json`）。
+- 如果字典没维护或内容不完整，流程会出现“无法命中店名/品名、无可入账结果、被跳过”等情况，表现为看起来“程序在跑但不入账”。
+- 建议先用少量真实样本把字典补齐，再跑日常流程。
 
 ## 4. 部署 Dify Workflow 并配置 .env
 
@@ -120,3 +145,39 @@ run_wetrace_daily_once.bat
 - `runtime_local/message_hash_state.local.json` 是否更新
 - `runtime_local/wetrace_state.*.local.json` 是否推进游标
 - `data/dify_ingest_audit.local.jsonl`（或你配置的审计路径）是否有调用记录
+
+## 常见问题（FAQ）
+
+1. 为什么不进账？
+
+- 先看字典有没有维护：`dictionaries/known_stores.local.json`、`dictionaries/products.local.json`。
+- 这两个字典是前置条件，未维护或内容不全时，最常见表现就是“不进账 / 被跳过”。
+- 再看控制台最后的 `[LOG] ...` 路径，确认是“识别不到”还是“流程异常”。
+
+2. 为什么第一次运行没有任何账单写入？
+
+- 这是正常行为。第一次运行是初始化游标，只同步 `wetrace_state`，不写 `runtime_local/ledger.local.csv`。
+- 从第二次运行开始才按增量消息入账。
+
+3. 为什么提示群不匹配或一直抓不到目标群消息？
+
+- 优先用 `WETRACE_TALKER_KEYWORD` 先跑一次，拿到日志里的 `chosen_id`。
+- 把 `chosen_id` 回填到 `WETRACE_TALKER_ID` 后固定使用 ID 绑定。
+- `WETRACE_KEYWORD` 是消息内容过滤，不是群绑定参数，别混用。
+
+4. 为什么 daily-once 提示 bridge 健康检查失败？
+
+- `run_wetrace_daily_once.bat` 依赖本地 bridge 健康检查地址：`http://127.0.0.1:8787/api/health`。
+- 先单独运行 `run_dify_bridge.bat`，确认 bridge 进程已启动，再重试 daily-once。
+- 若仍失败，重点检查 `.env` 中 Dify 相关配置和本机端口占用。
+
+5. 为什么显示“成功”但账单文件没新增？
+
+- 先看验收口径文件：`runtime_local/ledger.local.csv`（以它为准）。
+- 再看 `runtime_local/message_hash_state.local.json` 是否更新，排除被去重跳过。
+- 同时查看 `data/dify_ingest_audit.local.jsonl` 是否有调用记录，确认请求是否真正走到了 ingest。
+
+6. 报错 502 是什么问题？
+
+- 当前链路里，`502` 通常是 Dify 侧返回异常或返回体不符合预期导致，不是本地 CSV 写盘本身的问题。
+- 先检查 Dify 工作流是否可正常运行、API Key/URL 是否有效、工作流输出字段是否符合你当前接入格式。

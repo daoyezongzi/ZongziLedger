@@ -73,6 +73,30 @@ def _extract_int(payload: Dict[str, Any], keys: Iterable[str]) -> int:
     return 0
 
 
+def _talker_aliases(value: str) -> List[str]:
+    text = _to_text(value)
+    if not text:
+        return []
+    lower = text.lower()
+    aliases = {text, lower}
+    if lower.endswith("@chatroom"):
+        base = text[: -len("@chatroom")]
+        base_lower = lower[: -len("@chatroom")]
+        if base:
+            aliases.add(base)
+        if base_lower:
+            aliases.add(base_lower)
+    return [item for item in aliases if item]
+
+
+def _talker_matches(expected: str, actual: str) -> bool:
+    expected_set = set(_talker_aliases(expected))
+    actual_set = set(_talker_aliases(actual))
+    if not expected_set or not actual_set:
+        return False
+    return bool(expected_set & actual_set)
+
+
 def _format_timestamp(payload: Dict[str, Any]) -> str:
     text_candidate = _extract_first(
         payload,
@@ -162,7 +186,7 @@ def _normalize_wetrace_message(
         return None, 0, "missing_content"
 
     talker = _extract_first(payload, ("talker_id", "talker", "talkerId", "chat_id", "conversation_id")) or talker_id
-    if talker_id and talker and talker != talker_id:
+    if talker_id and talker and not _talker_matches(talker_id, talker):
         return None, 0, "talker_mismatch"
 
     seq = _extract_int(payload, ("seq", "local_id", "localId", "id"))
@@ -514,8 +538,8 @@ def run() -> int:
             ledger_result.setdefault("json_written_bills", 0)
             ledger_result.setdefault("status", "workflow_ok")
             trace(
-                f"[WETRACE] workflow ingest ok: written_records={ledger_result.get('written_records_count', 0)}, "
-                f"json_bills={ledger_result.get('json_written_bills', 0)}"
+                f"[WETRACE] 入账处理成功: 成功进账={ledger_result.get('written_records_count', 0)}, "
+                f"账单条数={ledger_result.get('json_written_bills', 0)}"
             )
     except Exception as exc:
         trace(f"[WETRACE] ledger process failed: {exc}")
@@ -538,18 +562,26 @@ def run() -> int:
         print(f"[LOG] {log_path}")
         return 1
 
-    print("[WETRACE-INGEST] summary")
+    written_count = int(ledger_result.get("written_records_count", 0) or 0)
+    json_bills_count = int(ledger_result.get("json_written_bills", 0) or 0)
+    skipped_counts = dict(reason_counts)
+    skipped_total = int(sum(int(v or 0) for v in skipped_counts.values()))
+
+    print("[WETRACE-INGEST] 执行摘要")
+    print(
+        f"[WETRACE-INGEST] 成功进账 {written_count} 条，跳过进账 {skipped_total} 条，识别账单 {json_bills_count} 条"
+    )
     print(
         json.dumps(
             {
                 "fetched": len(raw_rows),
                 "matched": len(capture_messages),
                 "dispatch_mode": dispatch_mode,
-                "written_records_count": int(ledger_result.get("written_records_count", 0) or 0),
-                "json_written_bills": int(ledger_result.get("json_written_bills", 0) or 0),
+                "written_records_count": written_count,
+                "json_written_bills": json_bills_count,
                 "last_seq_before": last_seq,
                 "last_seq_after": max(last_seq, raw_max_seq),
-                "skipped": dict(reason_counts),
+                "skipped": skipped_counts,
             },
             ensure_ascii=False,
         )
