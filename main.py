@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
 
 from core.constants import (
-    DEFAULT_CAPTURE_BACKEND,
     DEFAULT_CAPTURE_MODE,
     DEFAULT_CAPTURE_SCOPE,
     DEFAULT_CAPTURE_STATE_DIR,
@@ -42,28 +41,20 @@ from core.constants import (
     resolve_end_marker,
     resolve_start_marker,
 )
-from core.monitor import MonitorError, fetch_recent_messages
-from core.monitor_win32 import Win32MonitorError, fetch_recent_messages_win32_clipboard
-from core.monitor_win32_memory import (
-    Win32MemoryMonitorError,
-    fetch_recent_messages_win32_memory,
-)
+from core.output_excel import write_bill_excel_output
 from core.parser import parse_messages
 from core.store_lookup import annotate_records_with_known_stores, build_known_store_lookup
 from setup import check_environment
 
 CSV_HEADERS = [
-    "timestamp",
-    "order_id",
+    "store_name",
     "item",
     "amount",
-    "raw_message",
-    "message_hash",
-    "message_captured_at",
-    "recorded_at",
+    "remark",
 ]
 TraceFn = Optional[Callable[[str], None]]
 CONTROL_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+MOJIBAKE_RE = re.compile(r"[鍙姹忓澶湴灏崠閮]|�")
 DATETIME_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
@@ -74,6 +65,12 @@ DATETIME_FORMATS = (
 )
 INT_TEXT_RE = re.compile(r"^[+-]?\d+$")
 FLOAT_TEXT_RE = re.compile(r"^[+-]?\d+\.\d+$")
+DEFAULT_EXCEL_OUTPUT_PATH = "data/ledger_details.xlsx"
+DEFAULT_CANONICAL_TIME_BUCKET_MINUTES = 1
+
+
+class MonitorError(Exception):
+    """Capture backend error."""
 
 
 def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
@@ -202,20 +199,10 @@ def ensure_csv_file(csv_path: Path) -> None:
             raw_message = _sanitize_csv_text(row.get("raw_message", ""))
             migrated_rows.append(
                 {
-                    "timestamp": _sanitize_csv_text(row.get("timestamp", "")),
-                    "order_id": _sanitize_csv_text(row.get("order_id", ""))
-                    or _extract_order_id_from_message(
-                        raw_message,
-                        DEFAULT_START_MARKER,
-                        DEFAULT_ORDER_ID_DIGITS,
-                        DEFAULT_ORDER_ID_REQUIRE_HASH,
-                    ),
+                    "store_name": _normalize_store_name_text(row.get("store_name", "")),
                     "item": _sanitize_csv_text(row.get("item", "")),
                     "amount": row.get("amount", 0),
-                    "raw_message": raw_message,
-                    "message_hash": _sanitize_csv_text(row.get("message_hash", "")) or _fingerprint_text(raw_message),
-                    "message_captured_at": _sanitize_csv_text(row.get("message_captured_at", "")),
-                    "recorded_at": _sanitize_csv_text(row.get("recorded_at", "")),
+                    "remark": _sanitize_csv_text(row.get("remark", "")),
                 }
             )
 
@@ -271,8 +258,109 @@ def _sanitize_csv_text(value: Any) -> str:
     return text.strip()
 
 
+def _normalize_store_name_text(value: Any) -> str:
+    text = _sanitize_csv_text(value)
+    if not text:
+        return ""
+    return re.sub(r"^\s*店名\s*[：:]\s*", "", text).strip()
+
+
+def _looks_mojibake(text: Any) -> bool:
+    s = _sanitize_csv_text(text)
+    if not s:
+        return False
+    return bool(MOJIBAKE_RE.search(s))
+
+
 def _fingerprint_text(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _normalize_text_for_canonical_hash(text: str) -> str:
+    normalized = _sanitize_csv_text(text).lower()
+    return re.sub(r"\s+", "", normalized)
+
+
+def _canonical_time_bucket_from_text(
+    timestamp_text: str,
+    fallback_text: str = "",
+    bucket_minutes: int = DEFAULT_CANONICAL_TIME_BUCKET_MINUTES,
+) -> str:
+    minute_size = max(1, int(bucket_minutes))
+    parsed = _parse_datetime(_sanitize_csv_text(timestamp_text))
+    if parsed is None:
+        parsed = _parse_datetime(_sanitize_csv_text(fallback_text))
+    if parsed is None:
+        parsed = datetime.now()
+    bucket_minute = (parsed.minute // minute_size) * minute_size
+    bucket_dt = parsed.replace(minute=bucket_minute, second=0, microsecond=0)
+    return bucket_dt.strftime("%Y%m%d%H%M")
+
+
+def _resolve_canonical_bill_identity(
+    payload: Dict[str, Any],
+    bucket_minutes: int = DEFAULT_CANONICAL_TIME_BUCKET_MINUTES,
+) -> Dict[str, str]:
+    order_id = _sanitize_csv_text(payload.get("order_id", ""))
+    chat_id = _sanitize_csv_text(payload.get("chat_id", "")) or _sanitize_csv_text(
+        payload.get("source_id", "")
+    )
+    sender = (
+        _sanitize_csv_text(payload.get("sender", ""))
+        or _sanitize_csv_text(payload.get("name", ""))
+        or _sanitize_csv_text(payload.get("customer_name", ""))
+    )
+
+    raw_message = _sanitize_csv_text(payload.get("raw_message", ""))
+    normalized_hash = _sanitize_csv_text(payload.get("normalized_hash", ""))
+    if not normalized_hash and raw_message:
+        normalized_hash = _fingerprint_text(_normalize_text_for_canonical_hash(raw_message))
+    if not normalized_hash:
+        normalized_hash = _sanitize_csv_text(payload.get("message_hash", ""))
+
+    time_bucket = _sanitize_csv_text(payload.get("time_bucket", ""))
+    if not time_bucket:
+        time_bucket = _canonical_time_bucket_from_text(
+            _sanitize_csv_text(payload.get("timestamp", "")),
+            fallback_text=_sanitize_csv_text(payload.get("message_captured_at", ""))
+            or _sanitize_csv_text(payload.get("recorded_at", "")),
+            bucket_minutes=bucket_minutes,
+        )
+
+    if order_id:
+        bill_primary_key = f"order_id:{order_id}"
+        bill_key_type = "order_id"
+    else:
+        chat_part = chat_id or "unknown_chat"
+        sender_part = sender or "unknown_sender"
+        hash_part = normalized_hash or "unknown_hash"
+        bucket_part = time_bucket or "unknown_time"
+        bill_primary_key = f"composite:{chat_part}|{sender_part}|{hash_part}|{bucket_part}"
+        bill_key_type = "composite"
+
+    return {
+        "bill_primary_key": bill_primary_key,
+        "bill_key_type": bill_key_type,
+        "chat_id": chat_id,
+        "sender": sender,
+        "normalized_hash": normalized_hash,
+        "time_bucket": time_bucket,
+    }
+
+
+def _derive_excel_output_path(json_path: Path) -> Path:
+    if json_path.suffix.lower() == ".json":
+        return json_path.with_suffix(".xlsx")
+    return Path(DEFAULT_EXCEL_OUTPUT_PATH)
+
+
+def _can_use_excel_output() -> bool:
+    try:
+        import openpyxl  # type: ignore  # noqa: F401
+
+        return True
+    except Exception:
+        return False
 
 
 def _to_bool(value: Any, default: bool = True) -> bool:
@@ -354,7 +442,7 @@ def _mark_messages(
             require_hash=require_hash,
         )
         if not order_id:
-            continue
+            order_id = _sanitize_csv_text(message.get("order_id", ""))
         copied = dict(message)
         copied["message"] = raw_message
         copied["order_id"] = order_id
@@ -366,7 +454,7 @@ def _mark_messages(
 
 def deduplicate_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """单次运行内按 (时间戳, 来源ID, 原消息, 项目, 数量) 去重。"""
-    seen: Set[Tuple[str, str, str, str, str, str]] = set()
+    seen: Set[Tuple[str, str, str, str, str, str, str]] = set()
     unique_records: List[Dict[str, Any]] = []
 
     for record in records:
@@ -859,7 +947,7 @@ def filter_messages_by_hash_time_window(
     invalid_count = len(messages) - len(marked_messages)
     if trace and invalid_count > 0:
         trace(
-            f"[MAIN] 消息格式过滤: 已忽略 {invalid_count} 条未携带有效单号的消息。"
+            f"[MAIN] 消息过滤: 已忽略 {invalid_count} 条空消息。"
         )
     if not marked_messages:
         return []
@@ -1006,7 +1094,7 @@ def process_ledger_messages(
         )
         ignored_count = len(scoped_messages) - len(marked_messages)
         if ignored_count > 0 and trace:
-            trace(f"[MAIN] 日结模式忽略未携带有效单号消息数={ignored_count}")
+            trace(f"[MAIN] 日结模式忽略空消息数={ignored_count}")
         messages_for_parse, initialized_now = apply_daily_settlement_mode(marked_messages, config, trace=trace)
         if trace:
             trace(f"[MAIN] 日结筛选后消息数={len(messages_for_parse)}")
@@ -1034,6 +1122,8 @@ def process_ledger_messages(
         trace=trace,
     )
     known_store_hits = 0
+    init_json_path = Path(str(config.get("json_output_path", DEFAULT_JSON_OUTPUT_PATH)))
+    init_excel_path = Path(str(config.get("excel_output_path", _derive_excel_output_path(init_json_path))))
 
     if initialized_now:
         return {
@@ -1047,11 +1137,16 @@ def process_ledger_messages(
             "messages_for_parse_count": len(messages_for_parse),
             "parsed_records_count": 0,
             "unique_records_count": 0,
+            "canonical_bills_count": 0,
+            "new_canonical_bills_count": 0,
             "written_records_count": 0,
             "json_output_enabled": _to_bool(config.get("json_output_enabled", True), True),
             "json_written_bills": 0,
+            "excel_output_enabled": _to_bool(config.get("excel_output_enabled", True), True) and _can_use_excel_output(),
+            "excel_written_bills": 0,
             "data_path": str(data_path),
-            "json_path": str(config.get("json_output_path", DEFAULT_JSON_OUTPUT_PATH)),
+            "json_path": str(init_json_path),
+            "excel_path": str(init_excel_path),
             "known_store_lookup_enabled": bool(known_store_lookup.get("enabled", False)),
             "known_store_hits": 0,
             "records": [],
@@ -1085,21 +1180,75 @@ def process_ledger_messages(
         if trace:
             trace(f"[MAIN] 已关闭单次去重，记录数={len(unique_records)}")
 
-    written_records = write_records(data_path, unique_records)
+    canonical_bucket_minutes = _to_int(
+        config.get("canonical_time_bucket_minutes", DEFAULT_CANONICAL_TIME_BUCKET_MINUTES),
+        DEFAULT_CANONICAL_TIME_BUCKET_MINUTES,
+        minimum=1,
+    )
+    canonical_bills = build_bill_payloads(unique_records, bucket_minutes=canonical_bucket_minutes)
     if trace:
-        trace(f"[MAIN] 数据已写入={data_path}, written_records={written_records}")
+        trace(f"[MAIN] Canonical账单聚合后={len(canonical_bills)}")
 
     json_output_enabled = _to_bool(config.get("json_output_enabled", True), True)
-    bills: List[Dict[str, Any]] = []
-    json_path: Optional[Path] = None
+    json_path = Path(str(config.get("json_output_path", DEFAULT_JSON_OUTPUT_PATH)))
+    append_history = _to_bool(config.get("json_output_append_history", True), True)
+
+    excel_output_enabled = _to_bool(config.get("excel_output_enabled", True), True)
+    if excel_output_enabled and not _can_use_excel_output():
+        excel_output_enabled = False
+        if trace:
+            trace("[MAIN] 未检测到 openpyxl，已跳过XLSX输出。可执行 `python setup.py` 补齐可选依赖。")
+    excel_path = Path(str(config.get("excel_output_path", _derive_excel_output_path(json_path))))
+
+    existing_keys = _load_existing_canonical_keys_from_csv(data_path)
+    if append_history and json_path.exists():
+        existing_bills_for_dedupe = _load_existing_bills_from_json(json_path)
+        existing_keys.update(
+            _load_existing_canonical_keys_from_bills(
+                existing_bills_for_dedupe,
+                bucket_minutes=canonical_bucket_minutes,
+            )
+        )
+    new_canonical_bills, skipped_existing_bills = filter_new_bills_by_existing_keys(canonical_bills, existing_keys)
+    if trace:
+        trace(
+            f"[MAIN] Canonical去重后={len(new_canonical_bills)}，已跳过历史重复账单={skipped_existing_bills}"
+        )
+
+    records_to_write = flatten_bill_payloads_to_records(new_canonical_bills)
+    write_stats = write_records(data_path, records_to_write)
+    written_records = int(write_stats.get("written", 0))
+    if trace:
+        trace(
+            f"[MAIN] 数据已写入={data_path}, written_records={written_records}, "
+            f"skipped_no_known_store={int(write_stats.get('skipped_no_known_store', 0))}, "
+            f"skipped_mojibake={int(write_stats.get('skipped_mojibake', 0))}"
+        )
+
     json_written_bills = 0
+    bills_for_output: List[Dict[str, Any]] = new_canonical_bills
     if json_output_enabled:
-        json_path = Path(str(config.get("json_output_path", DEFAULT_JSON_OUTPUT_PATH)))
-        append_history = _to_bool(config.get("json_output_append_history", True), True)
-        bills = build_bill_payloads(unique_records)
-        json_written_bills = write_bill_json_output(json_path, bills, append_history=append_history)
+        json_written_bills, bills_for_output = write_bill_json_output(
+            json_path,
+            new_canonical_bills,
+            append_history=append_history,
+            return_merged=True,
+        )
         if trace:
             trace(f"[MAIN] JSON已写入={json_path}, bills={json_written_bills}")
+
+    excel_written_bills = 0
+    if excel_output_enabled:
+        try:
+            excel_stats = write_bill_excel_output(excel_path, bills_for_output)
+            excel_written_bills = int(excel_stats.get("bill_count", 0))
+            if trace:
+                trace(
+                    f"[MAIN] XLSX已写入={excel_path}, bills={excel_written_bills}, total_amount={float(excel_stats.get('total_amount', 0.0)):.2f}"
+                )
+        except Exception as exc:
+            if trace:
+                trace(f"[MAIN] XLSX输出失败: {exc}")
 
     return {
         "status": "ok",
@@ -1112,121 +1261,382 @@ def process_ledger_messages(
         "messages_for_parse_count": len(messages_for_parse),
         "parsed_records_count": len(parsed_records),
         "unique_records_count": len(unique_records),
+        "canonical_bills_count": len(canonical_bills),
+        "new_canonical_bills_count": len(new_canonical_bills),
         "written_records_count": written_records,
+        "skipped_no_known_store_count": int(write_stats.get("skipped_no_known_store", 0)),
+        "skipped_mojibake_count": int(write_stats.get("skipped_mojibake", 0)),
         "json_output_enabled": json_output_enabled,
         "json_written_bills": json_written_bills,
+        "excel_output_enabled": excel_output_enabled,
+        "excel_written_bills": excel_written_bills,
         "data_path": str(data_path),
-        "json_path": str(json_path) if json_path is not None else "",
+        "json_path": str(json_path),
+        "excel_path": str(excel_path),
         "known_store_lookup_enabled": bool(known_store_lookup.get("enabled", False)),
         "known_store_hits": known_store_hits,
-        "records": unique_records,
-        "bills": bills,
+        "records": records_to_write,
+        "bills": bills_for_output,
     }
 
 
-def write_records(csv_path: Path, records: List[Dict[str, Any]]) -> int:
-    """将记录追加写入 CSV，返回写入条数。"""
+def write_records(csv_path: Path, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """将记录追加写入 CSV，返回写入统计。"""
     if not records:
-        return 0
+        return {
+            "written": 0,
+            "skipped_no_known_store": 0,
+            "skipped_mojibake": 0,
+        }
 
-    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    written = 0
+    skipped_no_known_store = 0
+    skipped_mojibake = 0
     with csv_path.open("a", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
         for record in records:
+            store_name = _normalize_store_name_text(record.get("known_store", ""))
+            if not store_name:
+                skipped_no_known_store += 1
+                continue
+            if _looks_mojibake(store_name) or _looks_mojibake(record.get("item", "")):
+                skipped_mojibake += 1
+                continue
             writer.writerow(
                 {
-                    "timestamp": _sanitize_csv_text(record.get("timestamp", "")),
-                    "order_id": _sanitize_csv_text(record.get("order_id", "")),
+                    "store_name": store_name,
                     "item": _sanitize_csv_text(record.get("item", "")),
                     "amount": record.get("amount", 0.0),
-                    "raw_message": _sanitize_csv_text(record.get("raw_message", "")),
-                    "message_hash": _sanitize_csv_text(record.get("message_hash", "")),
-                    "message_captured_at": _sanitize_csv_text(record.get("message_captured_at", "")),
-                    "recorded_at": now_text,
+                    "remark": _sanitize_csv_text(record.get("remark", "")),
+                }
+            )
+            written += 1
+
+    return {
+        "written": written,
+        "skipped_no_known_store": skipped_no_known_store,
+        "skipped_mojibake": skipped_mojibake,
+    }
+
+
+def _build_record_instance_key(record: Dict[str, Any], bill_primary_key: str) -> str:
+    parts = [
+        bill_primary_key,
+        _sanitize_csv_text(record.get("raw_message", "")),
+        _sanitize_csv_text(record.get("message_hash", "")),
+        _sanitize_csv_text(record.get("timestamp", "")),
+        _sanitize_csv_text(record.get("message_captured_at", "")),
+        _sanitize_csv_text(record.get("source_id", "")),
+    ]
+    return "|".join(parts)
+
+
+def _prepare_bill_payload(
+    bill: Dict[str, Any],
+    bucket_minutes: int = DEFAULT_CANONICAL_TIME_BUCKET_MINUTES,
+) -> Dict[str, Any]:
+    prepared = dict(bill)
+    identity = _resolve_canonical_bill_identity(prepared, bucket_minutes=bucket_minutes)
+    prepared.update(identity)
+
+    prepared["order_id"] = _sanitize_csv_text(prepared.get("order_id", ""))
+    prepared["name"] = _sanitize_csv_text(prepared.get("name", ""))
+    prepared["sender"] = _sanitize_csv_text(prepared.get("sender", "")) or prepared["name"]
+    prepared["message_hash"] = _sanitize_csv_text(prepared.get("message_hash", ""))
+    prepared["message_captured_at"] = _sanitize_csv_text(prepared.get("message_captured_at", ""))
+    prepared["recorded_at"] = _sanitize_csv_text(prepared.get("recorded_at", ""))
+    prepared["source_id"] = _sanitize_csv_text(prepared.get("source_id", ""))
+    prepared["source_type"] = _sanitize_csv_text(prepared.get("source_type", ""))
+    prepared["source_ref"] = _sanitize_csv_text(prepared.get("source_ref", ""))
+    prepared["ocr_provider"] = _sanitize_csv_text(prepared.get("ocr_provider", ""))
+    prepared["timestamp"] = _sanitize_csv_text(prepared.get("timestamp", ""))
+    prepared["raw_message"] = _sanitize_csv_text(prepared.get("raw_message", ""))
+
+    normalized_items: List[Dict[str, Any]] = []
+    raw_items = prepared.get("items", [])
+    if isinstance(raw_items, list):
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            item_name = _sanitize_csv_text(item.get("item", ""))
+            if not item_name:
+                continue
+            try:
+                amount = float(item.get("amount", 0.0))
+            except Exception:
+                amount = 0.0
+            normalized_items.append(
+                {
+                    "item": item_name,
+                    "amount": amount,
+                    "remark": _sanitize_csv_text(item.get("remark", "")),
+                }
+            )
+    prepared["items"] = normalized_items
+    prepared["item_count"] = len(normalized_items)
+    prepared["total_amount"] = sum(float(x.get("amount", 0.0)) for x in normalized_items)
+    return prepared
+
+
+def _load_existing_bills_from_json(json_path: Path) -> List[Dict[str, Any]]:
+    if not json_path.exists():
+        return []
+    try:
+        with json_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return []
+
+    if isinstance(payload, dict) and isinstance(payload.get("bills"), list):
+        return [x for x in payload.get("bills", []) if isinstance(x, dict)]
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    return []
+
+
+def _load_existing_canonical_keys_from_csv(csv_path: Path) -> Set[str]:
+    existing_keys: Set[str] = set()
+    if not csv_path.exists():
+        return existing_keys
+    for row in _iter_csv_rows_safely(csv_path):
+        order_id = _sanitize_csv_text(row.get("order_id", ""))
+        if order_id:
+            existing_keys.add(f"order_id:{order_id}")
+    return existing_keys
+
+
+def _load_existing_canonical_keys_from_bills(
+    bills: List[Dict[str, Any]],
+    bucket_minutes: int = DEFAULT_CANONICAL_TIME_BUCKET_MINUTES,
+) -> Set[str]:
+    keys: Set[str] = set()
+    for bill in bills:
+        identity = _resolve_canonical_bill_identity(bill, bucket_minutes=bucket_minutes)
+        key = _sanitize_csv_text(identity.get("bill_primary_key", ""))
+        if key:
+            keys.add(key)
+    return keys
+
+
+def filter_new_bills_by_existing_keys(
+    bills: List[Dict[str, Any]],
+    existing_keys: Set[str],
+) -> Tuple[List[Dict[str, Any]], int]:
+    if not bills:
+        return [], 0
+
+    kept: List[Dict[str, Any]] = []
+    skipped = 0
+    local_keys = set(existing_keys)
+    for bill in bills:
+        key = _sanitize_csv_text(bill.get("bill_primary_key", ""))
+        if not key:
+            identity = _resolve_canonical_bill_identity(bill)
+            key = _sanitize_csv_text(identity.get("bill_primary_key", ""))
+            if key:
+                bill = _prepare_bill_payload(bill)
+        if key and key in local_keys:
+            skipped += 1
+            continue
+        if key:
+            local_keys.add(key)
+        kept.append(bill)
+    return kept, skipped
+
+
+def build_bill_payloads(
+    records: List[Dict[str, Any]],
+    bucket_minutes: int = DEFAULT_CANONICAL_TIME_BUCKET_MINUTES,
+) -> List[Dict[str, Any]]:
+    if not records:
+        return []
+
+    grouped_records: Dict[str, Dict[str, Any]] = {}
+    grouped_order: List[str] = []
+    for record in records:
+        identity = _resolve_canonical_bill_identity(record, bucket_minutes=bucket_minutes)
+        bill_primary_key = _sanitize_csv_text(identity.get("bill_primary_key", ""))
+        if not bill_primary_key:
+            continue
+        instance_key = _build_record_instance_key(record, bill_primary_key)
+        if instance_key not in grouped_records:
+            grouped_records[instance_key] = {
+                "identity": identity,
+                "records": [],
+            }
+            grouped_order.append(instance_key)
+        grouped_records[instance_key]["records"].append(record)
+
+    def _extract_remark_prefix(raw_message: str) -> str:
+        text = _sanitize_csv_text(raw_message)
+        if not text:
+            return ""
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if not lines:
+            return ""
+        for line in lines:
+            # 常见备注前缀：带X月费用旧货处理...
+            m = re.match(
+                r"^(带\d{1,2}月费用(?:旧货处理)?|旧货处理|备注[:：]?[^\d]*)",
+                line,
+            )
+            if m:
+                return _sanitize_csv_text(m.group(1)).rstrip("：:")
+        return ""
+
+    seen_bill_keys: Set[str] = set()
+    payloads: List[Dict[str, Any]] = []
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for instance_key in grouped_order:
+        grouped = grouped_records.get(instance_key, {})
+        identity = grouped.get("identity", {})
+        bill_primary_key = _sanitize_csv_text(identity.get("bill_primary_key", ""))
+        if not bill_primary_key:
+            continue
+        if bill_primary_key in seen_bill_keys:
+            continue
+
+        records_in_instance = grouped.get("records", [])
+        if not records_in_instance:
+            continue
+        sample = records_in_instance[0]
+        bill = {
+            "order_id": _sanitize_csv_text(sample.get("order_id", "")),
+            "name": _sanitize_csv_text(sample.get("name", "")),
+            "sender": _sanitize_csv_text(sample.get("sender", "")),
+            "known_store": _normalize_store_name_text(sample.get("known_store", "")),
+            "store_name": _normalize_store_name_text(sample.get("known_store", ""))
+            or _normalize_store_name_text(sample.get("store_name", "")),
+            "chat_id": _sanitize_csv_text(identity.get("chat_id", "")),
+            "message_hash": _sanitize_csv_text(sample.get("message_hash", "")),
+            "normalized_hash": _sanitize_csv_text(identity.get("normalized_hash", "")),
+            "time_bucket": _sanitize_csv_text(identity.get("time_bucket", "")),
+            "message_captured_at": _sanitize_csv_text(sample.get("message_captured_at", "")),
+            "recorded_at": now_text,
+            "source_id": _sanitize_csv_text(sample.get("source_id", "")),
+            "source_type": _sanitize_csv_text(sample.get("source_type", "")),
+            "source_ref": _sanitize_csv_text(sample.get("source_ref", "")),
+            "ocr_provider": _sanitize_csv_text(sample.get("ocr_provider", "")),
+            "timestamp": _sanitize_csv_text(sample.get("timestamp", "")),
+            "raw_message": _sanitize_csv_text(sample.get("raw_message", "")),
+            "items": [],
+            "bill_primary_key": bill_primary_key,
+            "bill_key_type": _sanitize_csv_text(identity.get("bill_key_type", "")),
+            "remark_prefix": _extract_remark_prefix(_sanitize_csv_text(sample.get("raw_message", ""))),
+        }
+        if not bill["sender"]:
+            bill["sender"] = bill["name"]
+
+        for record in records_in_instance:
+            item = _sanitize_csv_text(record.get("item", ""))
+            if not item:
+                continue
+            try:
+                amount = float(record.get("amount", 0.0))
+            except Exception:
+                amount = 0.0
+            bill["items"].append(
+                {
+                    "item": item,
+                    "amount": amount,
+                    "remark": _sanitize_csv_text(bill.get("remark_prefix", "")),
                 }
             )
 
-    return len(records)
+        prepared = _prepare_bill_payload(bill, bucket_minutes=bucket_minutes)
+        payloads.append(prepared)
+        seen_bill_keys.add(bill_primary_key)
 
-
-def build_bill_payloads(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    bills: Dict[str, Dict[str, Any]] = {}
-    for record in records:
-        order_id = _sanitize_csv_text(record.get("order_id", ""))
-        if not order_id:
-            continue
-
-        message_hash = _sanitize_csv_text(record.get("message_hash", ""))
-        source_id = _sanitize_csv_text(record.get("source_id", ""))
-        bill_key = f"{order_id}|{message_hash}|{source_id}"
-        bill = bills.get(bill_key)
-        if bill is None:
-            bill = {
-                "order_id": order_id,
-                "name": _sanitize_csv_text(record.get("name", "")),
-                "message_hash": message_hash,
-                "message_captured_at": _sanitize_csv_text(record.get("message_captured_at", "")),
-                "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source_id": source_id,
-                "timestamp": _sanitize_csv_text(record.get("timestamp", "")),
-                "raw_message": _sanitize_csv_text(record.get("raw_message", "")),
-                "items": [],
-            }
-            bills[bill_key] = bill
-        elif not _sanitize_csv_text(bill.get("name", "")):
-            bill["name"] = _sanitize_csv_text(record.get("name", ""))
-
-        bill["items"].append(
-            {
-                "item": _sanitize_csv_text(record.get("item", "")),
-                "amount": float(record.get("amount", 0.0)),
-            }
-        )
-
-    payloads: List[Dict[str, Any]] = []
-    for bill in bills.values():
-        total_amount = sum(float(x.get("amount", 0.0)) for x in bill["items"])
-        bill["item_count"] = len(bill["items"])
-        bill["total_amount"] = total_amount
-        payloads.append(bill)
     return payloads
+
+
+def flatten_bill_payloads_to_records(bills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for bill in bills:
+        items = bill.get("items", [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_name = _sanitize_csv_text(item.get("item", ""))
+            if not item_name:
+                continue
+            try:
+                amount = float(item.get("amount", 0.0))
+            except Exception:
+                amount = 0.0
+            records.append(
+                {
+                    "timestamp": _sanitize_csv_text(bill.get("timestamp", "")),
+                    "order_id": _sanitize_csv_text(bill.get("order_id", "")),
+                    "item": item_name,
+                    "amount": amount,
+                    "record_type": "count",
+                    "raw_message": _sanitize_csv_text(bill.get("raw_message", "")),
+                    "message_hash": _sanitize_csv_text(bill.get("message_hash", "")),
+                    "message_captured_at": _sanitize_csv_text(bill.get("message_captured_at", "")),
+                    "source_id": _sanitize_csv_text(bill.get("source_id", "")),
+                    "source_type": _sanitize_csv_text(bill.get("source_type", "")),
+                    "source_ref": _sanitize_csv_text(bill.get("source_ref", "")),
+                    "ocr_provider": _sanitize_csv_text(bill.get("ocr_provider", "")),
+                    "known_store": _normalize_store_name_text(bill.get("known_store", "")),
+                    "store_name": _normalize_store_name_text(bill.get("store_name", "")),
+                    "name": _sanitize_csv_text(bill.get("name", "")),
+                    "sender": _sanitize_csv_text(bill.get("sender", "")),
+                    "chat_id": _sanitize_csv_text(bill.get("chat_id", "")),
+                    "normalized_hash": _sanitize_csv_text(bill.get("normalized_hash", "")),
+                    "time_bucket": _sanitize_csv_text(bill.get("time_bucket", "")),
+                    "bill_primary_key": _sanitize_csv_text(bill.get("bill_primary_key", "")),
+                }
+            )
+    return records
 
 
 def write_bill_json_output(
     json_path: Path,
     bills: List[Dict[str, Any]],
     append_history: bool = True,
-) -> int:
-    if not bills:
-        return 0
-
+    return_merged: bool = False,
+) -> Any:
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    existing: List[Dict[str, Any]] = []
-    if append_history and json_path.exists():
-        try:
-            with json_path.open("r", encoding="utf-8") as f:
-                payload = json.load(f)
-            if isinstance(payload, dict) and isinstance(payload.get("bills"), list):
-                existing = [x for x in payload.get("bills", []) if isinstance(x, dict)]
-            elif isinstance(payload, list):
-                existing = [x for x in payload if isinstance(x, dict)]
-        except Exception:
-            existing = []
 
-    merged = existing + bills
+    existing_raw = _load_existing_bills_from_json(json_path) if append_history else []
+    existing_prepared = [_prepare_bill_payload(x) for x in existing_raw]
+    existing_unique: List[Dict[str, Any]] = []
+    existing_keys: Set[str] = set()
+    for bill in existing_prepared:
+        key = _sanitize_csv_text(bill.get("bill_primary_key", ""))
+        if not key or key in existing_keys:
+            continue
+        existing_keys.add(key)
+        existing_unique.append(bill)
+
+    incoming_prepared = [_prepare_bill_payload(x) for x in bills]
+    appended = 0
+    for bill in incoming_prepared:
+        key = _sanitize_csv_text(bill.get("bill_primary_key", ""))
+        if not key or key in existing_keys:
+            continue
+        existing_keys.add(key)
+        existing_unique.append(bill)
+        appended += 1
+
     output = {
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "bills": merged,
+        "bills": existing_unique,
     }
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
-    return len(bills)
+    if return_merged:
+        return appended, existing_unique
+    return appended
 
 
 def _build_manual_messages(start_marker: str) -> List[Dict[str, str]]:
     """抓取失败时允许手动粘贴一条记账消息。"""
     print(
-        f"[手动模式] 可粘贴一整条记账消息（首行必须类似 #{start_marker}{DEFAULT_MANUAL_ORDER_ID_SAMPLE}），"
+        f"[手动模式] 可粘贴一整条记账消息（支持无头或有头，示例可选 #{start_marker}{DEFAULT_MANUAL_ORDER_ID_SAMPLE}），"
         f"输入单独一行 {DEFAULT_MANUAL_END_TOKEN} 结束："
     )
     lines: List[str] = []
@@ -1249,77 +1659,12 @@ def _build_manual_messages(start_marker: str) -> List[Dict[str, str]]:
 
 
 def _fetch_messages_auto(config: Dict[str, Any], trace: TraceFn = None) -> List[Dict[str, str]]:
-    """自动抓取消息：支持 win32_memory / win32_clipboard / uia。"""
-    backend = str(config.get("capture_backend", DEFAULT_CAPTURE_BACKEND)).strip().lower()
-    errors: List[str] = []
-
-    def _try_win32_memory() -> Optional[List[Dict[str, str]]]:
-        try:
-            if trace:
-                trace("[AUTO] 开始尝试 WIN32_MEMORY 后端")
-            messages = fetch_recent_messages_win32_memory(config, trace=trace)
-            if trace:
-                trace(f"[AUTO] WIN32_MEMORY 后端返回消息数={len(messages)}")
-            return messages
-        except Win32MemoryMonitorError as exc:
-            errors.append(f"win32_memory: {exc}")
-            if trace:
-                trace(f"[AUTO] WIN32_MEMORY 后端失败: {exc}")
-            return None
-
-    def _try_win32() -> Optional[List[Dict[str, str]]]:
-        try:
-            if trace:
-                trace("[AUTO] 开始尝试 WIN32_CLIPBOARD 后端")
-            messages = fetch_recent_messages_win32_clipboard(config, trace=trace)
-            if trace:
-                trace(f"[AUTO] WIN32_CLIPBOARD 后端返回消息数={len(messages)}")
-            return messages
-        except Win32MonitorError as exc:
-            errors.append(f"win32_clipboard: {exc}")
-            if trace:
-                trace(f"[AUTO] WIN32_CLIPBOARD 后端失败: {exc}")
-            return None
-
-    def _try_uia() -> Optional[List[Dict[str, str]]]:
-        try:
-            if trace:
-                trace("[AUTO] 开始尝试 UIA 后端")
-            messages = fetch_recent_messages(config, trace=trace)
-            if trace:
-                trace(f"[AUTO] UIA 后端返回消息数={len(messages)}")
-            return messages
-        except MonitorError as exc:
-            errors.append(f"uia: {exc}")
-            if trace:
-                trace(f"[AUTO] UIA 后端失败: {exc}")
-            return None
-
-    if backend in {"win32_memory", "memory", "win32mem", "mem"}:
-        messages = _try_win32_memory()
-        if messages is not None:
-            return messages
-    elif backend in {"win32", "win32_clipboard", "clipboard"}:
-        messages = _try_win32()
-        if messages is not None:
-            return messages
-    elif backend == "uia":
-        messages = _try_uia()
-        if messages is not None:
-            return messages
-    else:
-        messages = _try_win32_memory()
-        if messages is not None:
-            return messages
-        messages = _try_win32()
-        if messages is not None:
-            return messages
-        messages = _try_uia()
-        if messages is not None:
-            return messages
-
-    reason = "；".join(errors) if errors else "未知错误"
-    raise MonitorError(f"自动抓取失败：{reason}")
+    _ = config
+    _ = trace
+    raise MonitorError(
+        "auto capture backends (uia/win32) have been removed. "
+        "Use wetrace ingest workflow instead: run_wetrace_daily_once.bat or ingest_wetrace_local.py."
+    )
 
 
 def print_run_result(records: List[Dict[str, Any]], csv_path: Path) -> None:
@@ -1352,7 +1697,8 @@ def main() -> None:
     """程序入口。"""
     print("[启动] ZongziLedger 本地记账开始执行。")
 
-    if not check_environment():
+    # 初始化时一并检查可选依赖，确保后续 XLSX/OCR 功能可直接使用。
+    if not check_environment(include_optional=True):
         return
 
     try:
@@ -1368,6 +1714,7 @@ def main() -> None:
     trace(f"[MAIN] 管理员权限={'是' if _is_admin() else '否'}")
     trace(
         f"[MAIN] 配置摘要: capture_mode={config.get('capture_mode', DEFAULT_CAPTURE_MODE)}, "
+        f"capture_no_header_mode={config.get('capture_no_header_mode', True)}, "
         f"prefix={config.get('prefix', DEFAULT_PREFIX)}, max_messages={config.get('max_messages', DEFAULT_MAX_MESSAGES)}"
     )
     if dotenv_applied > 0:
@@ -1394,7 +1741,7 @@ def main() -> None:
             if inspected_count <= 0:
                 inspected_count = DEFAULT_MAX_MESSAGES
             print(
-                f"[抓取] 已检查窗口最近 {inspected_count} 条消息，前缀 {start_marker} 命中 {len(raw_messages)} 条。"
+                f"[抓取] 已检查窗口最近 {inspected_count} 条消息，候选命中 {len(raw_messages)} 条。"
             )
         except MonitorError as exc:
             trace(f"[MAIN] 自动抓取失败: {exc}")
@@ -1424,6 +1771,11 @@ def main() -> None:
         json_path_text = str(result.get("json_path", "") or "")
         if json_path_text:
             print(f"[JSON] 本次输出 {int(result.get('json_written_bills', 0))} 笔账单 -> {json_path_text}")
+    excel_output_enabled = _to_bool(result.get("excel_output_enabled", False), False)
+    if excel_output_enabled:
+        excel_path_text = str(result.get("excel_path", "") or "")
+        if excel_path_text:
+            print(f"[XLSX] 本次输出 {int(result.get('excel_written_bills', 0))} 笔账单 -> {excel_path_text}")
 
     show_totals = _to_bool(config.get("show_item_totals", True), True)
     if show_totals:

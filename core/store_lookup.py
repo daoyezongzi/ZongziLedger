@@ -36,7 +36,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 
 def _normalize_text(value: Any) -> str:
-    text = str(value or "").strip().lower()
+    text = str(value or "").replace("\ufeff", "").strip().lower()
     return _SPACE_RE.sub(" ", text)
 
 

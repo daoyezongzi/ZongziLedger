@@ -1,0 +1,893 @@
+app:
+  description: 面向中老年人的、通过抓取微信聊天记录来记账的账本项目
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: ZongziLegder
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@725407927b04e236212083d20e92830d60fa944e42cd357ef6902c160414f6f1
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 50
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: code
+      id: 1778334535508-source-1778759911832-target
+      selected: false
+      source: '1778334535508'
+      sourceHandle: source
+      target: '1778759911832'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: iteration
+      id: 1778759911832-source-1778760352952-target
+      selected: false
+      source: '1778759911832'
+      sourceHandle: source
+      target: '1778760352952'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: iteration-start
+        targetType: code
+      id: 1778760352952start-source-1778760471061-target
+      selected: false
+      source: 1778760352952start
+      sourceHandle: source
+      target: '1778760471061'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: code
+        targetType: if-else
+      id: 1778760471061-source-1778761597245-target
+      selected: false
+      source: '1778760471061'
+      sourceHandle: source
+      target: '1778761597245'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: if-else
+        targetType: llm
+      id: 1778761597245-true-1778761684131-target
+      source: '1778761597245'
+      sourceHandle: 'true'
+      target: '1778761684131'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: if-else
+        targetType: code
+      id: 1778761597245-false-17787617818580-target
+      source: '1778761597245'
+      sourceHandle: 'false'
+      target: '17787617818580'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: llm
+        targetType: code
+      id: 1778761684131-source-1778762245526-target
+      source: '1778761684131'
+      sourceHandle: source
+      target: '1778762245526'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInLoop: false
+        sourceType: iteration
+        targetType: code
+      id: 1778760352952-source-1778763345086-target
+      source: '1778760352952'
+      sourceHandle: source
+      target: '1778763345086'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: end
+      id: 1778763345086-source-1778335626179-target
+      source: '1778763345086'
+      sourceHandle: source
+      target: '1778335626179'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: code
+        targetType: variable-aggregator
+      id: 1778762245526-source-1778913571187-target
+      source: '1778762245526'
+      sourceHandle: source
+      target: '1778913571187'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        sourceType: code
+        targetType: variable-aggregator
+      id: 17787617818580-source-1778913571187-target
+      source: '17787617818580'
+      sourceHandle: source
+      target: '1778913571187'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: messages_json
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: messages_json
+        - default: ''
+          hint: ''
+          label: payload_json
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: payload_json
+        - default: ''
+          hint: ''
+          label: query
+          options: []
+          placeholder: ''
+          required: false
+          type: text-input
+          variable: query
+        - default: ''
+          hint: ''
+          label: normalization_context_json
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: normalization_context_json
+      height: 187
+      id: '1778334535508'
+      position:
+        x: -23.77695246750443
+        y: 329.1124558886761
+      positionAbsolute:
+        x: -23.77695246750443
+        y: 329.1124558886761
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1778763345086'
+          - normalized_messages
+          value_type: array[object]
+          variable: normalized_messages
+        - value_selector:
+          - '1778763345086'
+          - normalization_summary
+          value_type: object
+          variable: normalization_summary
+        selected: false
+        title: 输出
+        type: end
+      height: 114
+      id: '1778335626179'
+      position:
+        x: 2604.8047561316043
+        y: 350.1124558886761
+      positionAbsolute:
+        x: 2604.8047561316043
+        y: 350.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "def main(payload_json: str = \"\", messages_json: str = \"\", query:\
+          \ str = \"\") -> dict:\n    import json\n    import hashlib\n    from datetime\
+          \ import datetime\n\n    LIST_KEYS = (\n        \"messages\", \"normalized_messages\"\
+          , \"normalized_block\", \"normalized_blocks\",\n        \"candidate_results\"\
+          , \"candidate_messages\", \"ledger_messages\", \"records\", \"items\"\n\
+          \    )\n\n    def s(v):\n        return str(v or \"\").replace(\"\\r\\n\"\
+          , \"\\n\").replace(\"\\r\", \"\\n\").strip()\n\n    def loads_any(v):\n\
+          \        if isinstance(v, (dict, list)):\n            return v\n       \
+          \ text = s(v)\n        if not text:\n            return None\n        try:\n\
+          \            return json.loads(text)\n        except Exception:\n      \
+          \      return None\n\n    def pick_text(obj, keys):\n        if not isinstance(obj,\
+          \ dict):\n            return \"\"\n        for k in keys:\n            val\
+          \ = obj.get(k)\n            if val is None:\n                continue\n\
+          \            if isinstance(val, str):\n                t = s(val)\n    \
+          \            if t:\n                    return t\n            elif isinstance(val,\
+          \ (int, float, bool)):\n                return s(val)\n        return \"\
+          \"\n\n    def pick_list(x):\n        if isinstance(x, list):\n         \
+          \   return x\n        if not isinstance(x, dict):\n            return []\n\
+          \        for k in LIST_KEYS:\n            v = x.get(k)\n            if isinstance(v,\
+          \ list):\n                return v\n        for k in (\"data\", \"outputs\"\
+          , \"result\", \"payload\"):\n            sub = pick_list(x.get(k))\n   \
+          \         if sub:\n                return sub\n        if pick_text(x, (\"\
+          message\", \"normalized_block\", \"cleaned_message\", \"raw_message\", \"\
+          text\", \"content\")):\n            return [x]\n        return []\n\n  \
+          \  payload_obj = loads_any(payload_json)\n    messages_obj = loads_any(messages_json)\n\
+          \n    entries = pick_list(messages_obj) or pick_list(payload_obj)\n\n  \
+          \  now = datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n    top_source\
+          \ = pick_text(payload_obj if isinstance(payload_obj, dict) else {}, (\"\
+          source_id\", \"chat_name\", \"chat_id\", \"source\"))\n\n    raw_messages\
+          \ = []\n    for e in entries:\n        row = e if isinstance(e, dict) else\
+          \ {\"message\": e}\n        msg = pick_text(row, (\"message\", \"normalized_block\"\
+          , \"cleaned_message\", \"raw_message\", \"text\", \"content\"))\n      \
+          \  msg = s(msg)\n        if not msg:\n            continue\n\n        ts\
+          \ = pick_text(row, (\"timestamp\", \"message_time\", \"created_at\", \"\
+          event_time\", \"time\")) or now\n        sid = pick_text(row, (\"source_id\"\
+          , \"chat_name\", \"chat_id\", \"conversation_id\", \"source\")) or top_source\
+          \ or \"dify\"\n        mhash = pick_text(row, (\"message_hash\", \"hash\"\
+          ))\n        if not mhash:\n            mhash = hashlib.sha1(msg.encode(\"\
+          utf-8\", errors=\"ignore\")).hexdigest()\n        captured = pick_text(row,\
+          \ (\"message_captured_at\", \"captured_at\")) or now\n        name = pick_text(row,\
+          \ (\"name\", \"sender\", \"customer_name\", \"buyer_name\", \"contact_name\"\
+          ))\n\n        raw_messages.append({\n            \"message\": msg,\n   \
+          \         \"timestamp\": ts,\n            \"source_id\": sid,\n        \
+          \    \"message_hash\": mhash,\n            \"message_captured_at\": captured,\n\
+          \            \"name\": name\n        })\n\n    query_out = s(query) or (raw_messages[0][\"\
+          message\"] if raw_messages else \"\")\n    return {\"raw_messages\": raw_messages,\
+          \ \"query_out\": query_out}\n"
+        code_language: python3
+        outputs:
+          query_out:
+            children: null
+            type: string
+          raw_messages:
+            children: null
+            type: array[object]
+        selected: false
+        title: 代码执行
+        type: code
+        variables:
+        - value_selector:
+          - '1778334535508'
+          - payload_json
+          value_type: string
+          variable: payload_json
+        - value_selector:
+          - '1778334535508'
+          - messages_json
+          value_type: string
+          variable: messages_json
+        - value_selector:
+          - '1778334535508'
+          - query
+          value_type: string
+          variable: query
+      height: 52
+      id: '1778759911832'
+      position:
+        x: 264.43481594211016
+        y: 350.1124558886761
+      positionAbsolute:
+        x: 264.43481594211016
+        y: 350.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        error_handle_mode: continue-on-error
+        flatten_output: true
+        height: 352
+        is_parallel: true
+        iterator_input_type: array[object]
+        iterator_selector:
+        - '1778759911832'
+        - raw_messages
+        output_selector:
+        - '1778913571187'
+        - output
+        output_type: array[object]
+        parallel_nums: 5
+        selected: false
+        start_node_id: 1778760352952start
+        title: 迭代
+        type: iteration
+        width: 1689
+      height: 352
+      id: '1778760352952'
+      position:
+        x: 558.9437787370903
+        y: 350.1124558886761
+      positionAbsolute:
+        x: 558.9437787370903
+        y: 350.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 1689
+      zIndex: 1
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1778760352952start
+      parentId: '1778760352952'
+      position:
+        x: 24
+        y: 68
+      positionAbsolute:
+        x: 582.9437787370903
+        y: 418.1124558886761
+      selectable: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: "def main(item: dict = None, normalization_context_json: str = \"\"\
+          ) -> dict:\n    import re\n    import hashlib\n    from datetime import\
+          \ datetime\n\n    ITEM_RE = re.compile(r\".*?\\d+(?:\\.\\d+)?\\s*(?:件|包|袋|箱|瓶|听|支|条|盒|份|杯|个|桶|罐|斤|两|公斤|kg|KG|g|G|l|L|ml|ML|mL|Ml|pcs|PCS)?\\\
+          s*$\")\n    HEADER_HINT_RE = re.compile(r\"^[#＃]?\\s*记账(?:\\d{0,8})\\s*$\"\
+          )\n    VOLUME_RE = re.compile(r\"^(?:\\d+(?:\\.\\d+)?\\s*[mM]?[lL]|\\d{2,4})$\"\
+          )\n\n    def s(v):\n        return str(v or \"\").replace(\"\\r\\n\", \"\
+          \\n\").replace(\"\\r\", \"\\n\").strip()\n\n    try:\n        row = item\
+          \ if isinstance(item, dict) else {}\n        msg = s(row.get(\"message\"\
+          ) or row.get(\"normalized_block\") or row.get(\"cleaned_message\") or row.get(\"\
+          raw_message\") or row.get(\"text\") or row.get(\"content\"))\n        now\
+          \ = datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n\n        ts = s(row.get(\"\
+          timestamp\")) or now\n        sid = s(row.get(\"source_id\")) or \"dify\"\
+          \n        mhash = s(row.get(\"message_hash\")) or (hashlib.sha1(msg.encode(\"\
+          utf-8\", errors=\"ignore\")).hexdigest() if msg else \"\")\n        captured\
+          \ = s(row.get(\"message_captured_at\")) or now\n        name = s(row.get(\"\
+          name\") or row.get(\"sender\"))\n\n        lines = [x.strip() for x in msg.split(\"\
+          \\n\") if x.strip()]\n        has_start = bool(lines and HEADER_HINT_RE.match(lines[0]))\n\
+          \        payload_lines = lines[1:] if has_start else list(lines)\n     \
+          \   if payload_lines and payload_lines[-1] in {\"结束\", \"#结束\"}:\n     \
+          \       payload_lines = payload_lines[:-1]\n\n        store_name = \"\"\n\
+          \        for line in payload_lines:\n            t = line.rstrip(\"：:\"\
+          ).strip()\n            if not t or HEADER_HINT_RE.match(t) or VOLUME_RE.fullmatch(t)\
+          \ or ITEM_RE.search(t):\n                continue\n            store_name\
+          \ = t\n            break\n\n        item_line_hits = sum(1 for x in payload_lines\
+          \ if ITEM_RE.search(x))\n        base_candidate = bool(msg) and (has_start\
+          \ or item_line_hits >= 1)\n\n        if not base_candidate:\n          \
+          \  is_candidate = False\n            skip_reason = \"not_candidate\"\n \
+          \       elif not store_name:\n            is_candidate = False\n       \
+          \     skip_reason = \"missing_store_line\"\n        else:\n            is_candidate\
+          \ = True\n            skip_reason = \"\"\n\n    except Exception:\n    \
+          \    now = datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n        msg =\
+          \ \"\"\n        ts = now\n        sid = \"dify\"\n        mhash = \"\"\n\
+          \        captured = now\n        name = \"\"\n        store_name = \"\"\n\
+          \        is_candidate = False\n        skip_reason = \"candidate_node_exception\"\
+          \n\n    entry = {\n        \"message\": msg,\n        \"raw_message\": msg,\n\
+          \        \"timestamp\": ts,\n        \"source_id\": sid,\n        \"message_hash\"\
+          : mhash,\n        \"message_captured_at\": captured,\n        \"name\":\
+          \ name,\n        \"store_name\": store_name,\n    }\n\n    return {\n  \
+          \      \"entry\": entry,\n        \"is_candidate\": is_candidate,\n    \
+          \    \"skip_reason\": skip_reason,\n        \"llm_input\": msg,\n      \
+          \  \"store_name\": store_name,\n    }"
+        code_language: python3
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        outputs:
+          entry:
+            children: null
+            type: object
+          is_candidate:
+            children: null
+            type: boolean
+          llm_input:
+            children: null
+            type: string
+          skip_reason:
+            children: null
+            type: string
+          store_name:
+            children: null
+            type: string
+        selected: false
+        title: 候选筛选
+        type: code
+        variables:
+        - value_selector:
+          - '1778334535508'
+          - normalization_context_json
+          value_type: string
+          variable: normalization_context_json
+        - value_selector:
+          - '1778760352952'
+          - item
+          value_type: object
+          variable: item
+      height: 52
+      id: '1778760471061'
+      parentId: '1778760352952'
+      position:
+        x: 87.43790126658018
+        y: 65
+      positionAbsolute:
+        x: 646.3816800036705
+        y: 415.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 4bddad05-b5bc-49b4-8b90-2e07817c459c
+            value: true
+            varType: boolean
+            variable_selector:
+            - '1778760471061'
+            - is_candidate
+          id: 'true'
+          logical_operator: and
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        selected: false
+        title: 条件分支 2
+        type: if-else
+      height: 148
+      id: '1778761597245'
+      parentId: '1778760352952'
+      position:
+        x: 369.9386207410116
+        y: 65.00000000000011
+      positionAbsolute:
+        x: 928.8823994781019
+        y: 415.1124558886762
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-chat
+          provider: langgenius/deepseek/deepseek
+        prompt_config:
+          jinja2_variables: []
+        prompt_template:
+        - edition_type: basic
+          id: f116a64d-b1be-4aee-a946-9e90cf0d2b49
+          role: system
+          text: "你是账单清洗器。输入是一段疑似记账文本。\n\n只输出结构化结果，不输出解释、不输出思考过程、不输出多余文字。\n\n目标：\n\
+            1) 生成可被本地解析器处理的 normalized_block。\n2) 保留原意，不凭空新增商品、数量、金额。\n3) 无法可靠清洗时，normalized_block\
+            \ 返回空字符串，并在 warnings 说明原因。\n\n硬规则：\nA. 店名\n- 尽量保留店名首行（若可识别）。\n- 店名不是商品，不要计入商品行。\n\
+            \nB. 结束行\n- 若末行不是“结束”，补一行“结束”。\n\nC. 备注识别（重点）\n- 片段若含以下说明性词语，优先判定为备注，不作为商品：\n\
+            \  - 带X月费用、旧货处理、备注、上月、欠款\n- 备注内容不要写入 normalized_block。\n- 备注原文写入 warnings。\n\
+            - 并提取 remark_prefix（例如：带4月费用旧货处理）；没有则空字符串。\n\nD. 商品拆分\n- 对“、，；”连接的并列片段先拆分，再逐段处理。\n\
+            - 例如：500绿茶1、蜜茶1、500红茶2 必须拆成三段处理。\n\nE. 规格识别与归一\n- 1l / 1L / 1 L 统一为 1L\n\
+            - 2l / 2L / 2 L 统一为 2L\n- 品名前裸数字 500/900 视为容量规格，归一为 500ml/900ml\n- 前置规格必须绑定商品，不能丢失\n\
+            \nF. 不确定处理\n- 无法确定规格或数量归属时，不要硬猜：\n  - 能保留原片段则写 warnings\n  - 严重不确定时 normalized_block\
+            \ 置空\n\n输出字段要求：\n- normalized_block: string\n- warnings: string[]\n- store_name:\
+            \ string\n- remark_prefix: string\n- normalize_hint: string"
+        - edition_type: basic
+          id: 1f729988-fe2d-480b-a955-1f236b180ecf
+          jinja2_text: ''
+          role: user
+          text: '{{#1778760471061.llm_input#}}'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              normalize_hint:
+                default: structured_candidate
+                enum:
+                - structured_candidate
+                - salvage_candidate
+                - fallback_sample
+                type: string
+              normalized_block:
+                type: string
+              remark_prefix:
+                default: ''
+                type: string
+              store_name:
+                default: ''
+                type: string
+              warnings:
+                default: []
+                items:
+                  type: string
+                type: array
+            required:
+            - normalized_block
+            type: object
+        structured_output_enabled: true
+        title: 账单-清洗
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1778761684131'
+      parentId: '1778760352952'
+      position:
+        x: 690.317794420964
+        y: 65
+      positionAbsolute:
+        x: 1249.2615731580543
+        y: 415.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: "def main(candidate: dict = None) -> dict:\n    def s(v):\n        return\
+          \ str(v or \"\").replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\").strip()\n\
+          \n    c = candidate if isinstance(candidate, dict) else {}\n    return {\n\
+          \        \"result_item\": {\n            \"is_candidate\": False,\n    \
+          \        \"message\": s(c.get(\"message\")),\n            \"timestamp\"\
+          : s(c.get(\"timestamp\")),\n            \"source_id\": s(c.get(\"source_id\"\
+          )),\n            \"message_hash\": s(c.get(\"message_hash\")),\n       \
+          \     \"message_captured_at\": s(c.get(\"message_captured_at\")),\n    \
+          \        \"name\": s(c.get(\"name\")),\n            \"skip_reason\": \"\
+          not_candidate\"\n        }\n    }\n"
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        outputs:
+          result_item:
+            children: null
+            type: object
+        selected: false
+        title: 透传跳过
+        type: code
+        variables:
+        - value_selector:
+          - '1778760471061'
+          - entry
+          value_type: object
+          variable: candidate
+      height: 52
+      id: '17787617818580'
+      parentId: '1778760352952'
+      position:
+        x: 1007.346696474151
+        y: 227.63858511443436
+      positionAbsolute:
+        x: 1566.2904752112413
+        y: 577.7510410031105
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: "def main(\n    entry: dict = None,\n    clean_structured: dict = None,\n\
+          \    clean_text: str = \"\",\n    store_name: str = \"\",\n    clean_s:\
+          \ dict = None\n) -> dict:\n    import json\n    import re\n    import hashlib\n\
+          \    from datetime import datetime\n\n    HEADER_RE = re.compile(r\"^[#＃]?\\\
+          s*记账\\s*(\\d{8})\\s*$\")\n    ITEM_RE = re.compile(\n        r\".*?\\d+(?:\\\
+          .\\d+)?\\s*(?:件|包|袋|箱|瓶|听|支|条|盒|份|杯|个|桶|罐|斤|两|公斤|kg|KG|g|G|l|L|ml|ML|pcs|PCS)?\\\
+          s*$\"\n    )\n\n    def s(v):\n        return str(v or \"\").replace(\"\\\
+          r\\n\", \"\\n\").replace(\"\\r\", \"\\n\").strip()\n\n    # 兼容节点里变量名是 clean_s\n\
+          \    if clean_structured is None and isinstance(clean_s, dict):\n      \
+          \  clean_structured = clean_s\n\n    def extract_block(st, txt, fallback):\n\
+          \        warnings = []\n        block = \"\"\n        llm_store_name = \"\
+          \"\n        remark_prefix = \"\"\n\n        if isinstance(st, dict):\n \
+          \           block = s(st.get(\"normalized_block\") or st.get(\"message\"\
+          ) or st.get(\"content\"))\n            llm_store_name = s(st.get(\"store_name\"\
+          ))\n            remark_prefix = s(st.get(\"remark_prefix\"))\n         \
+          \   raw_w = st.get(\"warnings\", [])\n            if isinstance(raw_w, list):\n\
+          \                warnings = [s(x) for x in raw_w if s(x)]\n            elif\
+          \ s(raw_w):\n                warnings = [s(raw_w)]\n        elif isinstance(st,\
+          \ str):\n            t = s(st)\n            if t.startswith(\"{\") and t.endswith(\"\
+          }\"):\n                try:\n                    obj = json.loads(t)\n \
+          \                   if isinstance(obj, dict):\n                        block\
+          \ = s(obj.get(\"normalized_block\") or obj.get(\"message\") or obj.get(\"\
+          content\"))\n                        llm_store_name = s(obj.get(\"store_name\"\
+          ))\n                        remark_prefix = s(obj.get(\"remark_prefix\"\
+          ))\n                        raw_w = obj.get(\"warnings\", [])\n        \
+          \                if isinstance(raw_w, list):\n                         \
+          \   warnings = [s(x) for x in raw_w if s(x)]\n                        elif\
+          \ s(raw_w):\n                            warnings = [s(raw_w)]\n       \
+          \         except Exception:\n                    block = t\n           \
+          \ else:\n                block = t\n\n        if not block:\n          \
+          \  block = s(txt)\n        if not block:\n            block = s(fallback)\n\
+          \n        return block, warnings, llm_store_name, remark_prefix\n\n    def\
+          \ normalize_block(text):\n        lines = [x.strip() for x in s(text).split(\"\
+          \\n\") if x.strip()]\n        if not lines:\n            return \"\", \"\
+          empty\", 0\n\n        m = HEADER_RE.fullmatch(lines[0])\n        if m:\n\
+          \            order_id = m.group(1)\n            lines[0] = f\"#记账{order_id}\"\
+          \n            if lines[-1] != \"结束\":\n                lines.append(\"结束\"\
+          )\n            item_hits = sum(1 for x in lines[1:-1] if ITEM_RE.search(x))\n\
+          \            if item_hits >= 1:\n                return \"\\n\".join(lines),\
+          \ \"header\", item_hits\n            return \"\", \"header_no_items\", item_hits\n\
+          \n        item_hits = sum(1 for x in lines[1:] if ITEM_RE.search(x))\n \
+          \       if item_hits >= 1:\n            if lines[-1] != \"结束\":\n      \
+          \          lines.append(\"结束\")\n            return \"\\n\".join(lines),\
+          \ \"no_header\", item_hits\n\n        return \"\", \"not_ledger\", item_hits\n\
+          \n    e = entry if isinstance(entry, dict) else {}\n    now = datetime.now().strftime(\"\
+          %Y-%m-%d %H:%M:%S\")\n\n    raw_block, warnings, store_name_from_llm, remark_prefix\
+          \ = extract_block(\n        clean_structured, clean_text, e.get(\"message\"\
+          )\n    )\n    normalized_block, mode, item_hits = normalize_block(raw_block)\n\
+          \n    ts = s(e.get(\"timestamp\")) or now\n    sid = s(e.get(\"source_id\"\
+          )) or \"dify\"\n    base_for_hash = normalized_block or s(e.get(\"message\"\
+          ))\n    mhash = s(e.get(\"message_hash\")) or (\n        hashlib.sha1(base_for_hash.encode(\"\
+          utf-8\", errors=\"ignore\")).hexdigest()\n        if base_for_hash else\
+          \ \"\"\n    )\n    captured = s(e.get(\"message_captured_at\")) or now\n\
+          \    name = s(e.get(\"name\"))\n    store_name = s(e.get(\"store_name\"\
+          )) or s(store_name) or store_name_from_llm\n\n    if not normalized_block:\n\
+          \        return {\n            \"result_item\": {\n                \"is_candidate\"\
+          : False,\n                \"normalized_block\": \"\",\n                \"\
+          message\": \"\",\n                \"timestamp\": ts,\n                \"\
+          source_id\": sid,\n                \"message_hash\": mhash,\n          \
+          \      \"message_captured_at\": captured,\n                \"name\": name,\n\
+          \                \"store_name\": store_name,\n                \"remark_prefix\"\
+          : remark_prefix,\n                \"warnings\": warnings,\n            \
+          \    \"skip_reason\": mode,\n                \"item_hits\": item_hits,\n\
+          \            }\n        }\n\n    return {\n        \"result_item\": {\n\
+          \            \"is_candidate\": True,\n            \"normalized_block\":\
+          \ normalized_block,\n            \"message\": normalized_block,\n      \
+          \      \"timestamp\": ts,\n            \"source_id\": sid,\n           \
+          \ \"message_hash\": mhash,\n            \"message_captured_at\": captured,\n\
+          \            \"name\": name,\n            \"store_name\": store_name,\n\
+          \            \"remark_prefix\": remark_prefix,\n            \"warnings\"\
+          : warnings,\n            \"normalize_mode\": mode,\n            \"item_hits\"\
+          : item_hits,\n        }\n    }"
+        code_language: python3
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        outputs:
+          result_item:
+            children: null
+            type: object
+        selected: false
+        title: 格式校验与组装
+        type: code
+        variables:
+        - value_selector:
+          - '1778760471061'
+          - entry
+          value_type: object
+          variable: entry
+        - value_selector:
+          - '1778761684131'
+          - structured_output
+          value_type: object
+          variable: clean_structured
+        - value_selector:
+          - '1778761684131'
+          - text
+          value_type: string
+          variable: clean_text
+        - value_selector:
+          - '1778760471061'
+          - store_name
+          value_type: string
+          variable: store_name
+      height: 52
+      id: '1778762245526'
+      parentId: '1778760352952'
+      position:
+        x: 992.317794420964
+        y: 65
+      positionAbsolute:
+        x: 1551.2615731580543
+        y: 415.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: "def unwrap(x):\n    if isinstance(x, dict) and isinstance(x.get(\"\
+          result_item\"), dict):\n        return x[\"result_item\"]\n    return x\
+          \ if isinstance(x, dict) else {}\n\ndef main(iter_items: list = None) ->\
+          \ dict:\n    rows = [unwrap(x) for x in (iter_items or [])]\n    rows =\
+          \ [x for x in rows if x]\n\n    normalized_messages = []\n    skipped_non_candidate\
+          \ = 0\n    skipped_empty = 0\n    skipped_not_ledger = 0\n\n    for x in\
+          \ rows:\n        is_cand = x.get(\"is_candidate\")\n        if is_cand is\
+          \ False:\n            skipped_non_candidate += 1\n            continue\n\
+          \n        msg = str(x.get(\"normalized_block\") or x.get(\"message\") or\
+          \ \"\").strip()\n        if not msg:\n            skipped_empty += 1\n \
+          \           continue\n\n        normalized_messages.append({\n         \
+          \   \"message\": msg,\n            \"normalized_block\": msg,\n        \
+          \    \"timestamp\": str(x.get(\"timestamp\") or \"\"),\n            \"source_id\"\
+          : str(x.get(\"source_id\") or \"dify\"),\n            \"message_hash\":\
+          \ str(x.get(\"message_hash\") or \"\"),\n            \"message_captured_at\"\
+          : str(x.get(\"message_captured_at\") or \"\"),\n            \"name\": str(x.get(\"\
+          name\") or \"\"),\n            \"store_name\": str(x.get(\"store_name\"\
+          ) or \"\"),\n            \"remark_prefix\": str(x.get(\"remark_prefix\"\
+          ) or \"\"),\n            \"warnings\": x.get(\"warnings\", []),\n      \
+          \      \"normalize_mode\": str(x.get(\"normalize_mode\") or \"\"),\n   \
+          \         \"item_hits\": int(x.get(\"item_hits\") or 0),\n        })\n\n\
+          \    return {\n        \"normalized_messages\": normalized_messages,\n \
+          \       \"normalization_summary\": {\n            \"schema_version\": \"\
+          zongziledger-dify-clean-v2\",\n            \"input_messages_count\": len(rows),\n\
+          \            \"normalized_count\": len(normalized_messages),\n         \
+          \   \"skipped_non_candidate_count\": skipped_non_candidate,\n          \
+          \  \"skipped_empty_message_count\": skipped_empty,\n            \"skipped_not_ledger_count\"\
+          : skipped_not_ledger,\n        },\n    }"
+        code_language: python3
+        outputs:
+          normalization_summary:
+            children: null
+            type: object
+          normalized_messages:
+            children: null
+            type: array[object]
+        selected: false
+        title: 汇总输出
+        type: code
+        variables:
+        - value_selector:
+          - '1778760352952'
+          - output
+          value_type: array[object]
+          variable: iter_items
+      height: 52
+      id: '1778763345086'
+      position:
+        x: 2306.6423852737776
+        y: 350.1124558886761
+      positionAbsolute:
+        x: 2306.6423852737776
+        y: 350.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1778760352952'
+        output_type: object
+        selected: false
+        title: 变量聚合器
+        type: variable-aggregator
+        variables:
+        - - '1778762245526'
+          - result_item
+        - - '17787617818580'
+          - result_item
+      height: 134
+      id: '1778913571187'
+      parentId: '1778760352952'
+      position:
+        x: 1294.317794420964
+        y: 65
+      positionAbsolute:
+        x: 1853.2615731580543
+        y: 415.1124558886761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    viewport:
+      x: -753.9023780658057
+      y: 245.94377205566144
+      zoom: 0.5000000000000013
+  rag_pipeline_variables: []

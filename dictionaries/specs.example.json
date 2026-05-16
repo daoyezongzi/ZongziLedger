@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-16",
+  "notes": "规格字典：用于规格归一（来自叶秀华便利店样本）",
+  "spec_aliases": [
+    { "raw": "1l", "normalized": "1L" },
+    { "raw": "1L", "normalized": "1L" },
+    { "raw": "1 L", "normalized": "1L" },
+    { "raw": "500", "normalized": "500ml" },
+    { "raw": "500ml", "normalized": "500ml" },
+    { "raw": "2l", "normalized": "2L" },
+    { "raw": "2L", "normalized": "2L" },
+    { "raw": "2 L", "normalized": "2L" },
+    { "raw": "900", "normalized": "900ml" },
+    { "raw": "900ml", "normalized": "900ml" }
+  ]
+}

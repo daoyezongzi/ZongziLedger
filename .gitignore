@@ -19,8 +19,11 @@ local_cleanup_quarantine/
 
 # Runtime output / local states
 logs/
+runtime_local/
+tmp_smoke_*/
 data/*.local.csv
 data/*.local.json
+data/*.local.xlsx
 data/daily_settlement_state*.json
 data/message_hash_state*.json
 data/ledger_details*.json
@@ -34,6 +37,13 @@ data/dify_ingest_audit*.jsonl
 gcm-diagnose.log
 .git_acl_backup.txt
 write_test_*.txt
+write_probe_*.txt
+@AutomationLog.txt
 gitfile_backup_for_delete.txt
 gitcodex_backup_for_delete/
 codex_write_probe/
+__acl_data.txt
+__codex_write_test_root.tmp
+
+# Local dictionary overrides
+dictionaries/*.local.json

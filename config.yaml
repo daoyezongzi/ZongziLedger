@@ -1,28 +1,28 @@
-prefix: "#记账"
-record_start_marker: "记账"
-record_end_marker: "结束"
+﻿prefix: "#璁拌处"
+record_start_marker: "璁拌处"
+record_end_marker: "缁撴潫"
 
 capture_mode: "auto"
-capture_backend: "win32_memory"
-
 capture_scope: "all"
 capture_state_dir: "data"
 deduplicate_within_run: false
 show_item_totals: true
 item_totals_top_n: 20
+max_messages: 30
 
 daily_settlement_mode: true
 daily_recent_message_limit: 3
 daily_seen_retention_days: 30
 daily_force_reinitialize: false
 
-order_id_required: true
+order_id_required: false
 order_id_digits: 8
 order_id_require_hash: true
 
-known_store_lookup_enabled: false
-known_store_lookup_path: "data/known_stores.local.json"
+known_store_lookup_enabled: true
+known_store_lookup_path: "dictionaries/known_stores.local.json"
 known_store_lookup_max_matches: 3
+known_store_gate_enabled: true
 
 message_hash_dedupe_enabled: true
 message_hash_window_seconds: 120
@@ -31,18 +31,17 @@ message_hash_state_retention_seconds: 604800
 json_output_enabled: true
 json_output_append_history: true
 
-max_messages: 30
+vision_enabled: false
+vision_inbox_dir: "data/vision_inbox"
+vision_state_path: "data/vision_ingest_state.local.json"
+vision_review_queue_path: "data/review_queue.local.jsonl"
+vision_ocr_provider: "tesseract"
+vision_image_extensions: [".png", ".jpg", ".jpeg", ".webp", ".bmp"]
+vision_max_images_per_run: 50
 
-win32_memory_overlap_bytes: 4096
-win32_memory_max_chunk_bytes: 2097152
-win32_memory_recent_blocks: 6
-win32_memory_max_block_chars: 2000
-win32_memory_min_payload_lines: 2
-win32_memory_max_payload_lines: 40
-win32_memory_min_valid_line_ratio: 0.8
-win32_memory_require_today_token: false
+wetrace_dispatch_mode: "dify"
 
-# Dify bridge (LLM -> local ledger pipeline)
+# Dify bridge (workflow ingress -> local ledger pipeline)
 dify_api_host: "127.0.0.1"
 dify_api_port: 8787
 dify_ingest_url: ""
@@ -55,7 +54,7 @@ dify_response_preview_limit: 20
 dify_ingest_timeout_seconds: 30
 dify_remote_enabled: true
 dify_remote_priority: true
-dify_remote_fallback_local: true
+dify_remote_fallback_local: false
 dify_remote_api_url: ""
 dify_remote_api_key: ""
 dify_remote_timeout_seconds: 30
@@ -75,3 +74,4 @@ dify_source_id: "dify"
 
 review_queue_enabled: true
 review_queue_path: "data/review_queue.jsonl"
+

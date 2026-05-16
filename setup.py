@@ -9,8 +9,16 @@ from typing import Dict
 
 # 需要的依赖：键是导入名，值是 pip 包名
 REQUIRED_PACKAGES: Dict[str, str] = {
-    "uiautomation": "uiautomation",
     "yaml": "pyyaml",
+}
+
+# 可选依赖：不影响基础抓取/入账流程。
+OPTIONAL_PACKAGES: Dict[str, str] = {
+    # xlsx 导出依赖（canonical bill Excel 输出）
+    "openpyxl": "openpyxl",
+    # 图片 OCR 扩展依赖
+    "PIL": "Pillow",
+    "pytesseract": "pytesseract",
 }
 
 
@@ -56,7 +64,7 @@ def _ensure_package(import_name: str, pip_name: str) -> bool:
         return False
 
 
-def check_environment() -> bool:
+def check_environment(include_optional: bool = False) -> bool:
     """执行环境检查并自动补齐依赖。"""
     print("[环境检查] 开始检查 Python 依赖...")
 
@@ -64,6 +72,14 @@ def check_environment() -> bool:
     for import_name, pip_name in REQUIRED_PACKAGES.items():
         ok = _ensure_package(import_name, pip_name)
         all_ok = all_ok and ok
+
+    if include_optional:
+        print("[环境检查] 检查可选依赖（Excel / 图片 OCR）...")
+        for import_name, pip_name in OPTIONAL_PACKAGES.items():
+            ok = _ensure_package(import_name, pip_name)
+            all_ok = all_ok and ok
+    else:
+        print("[环境检查] 已跳过可选依赖检查（Excel / 图片 OCR）。")
 
     if all_ok:
         print("[环境检查] 所有依赖已就绪。")
@@ -73,4 +89,4 @@ def check_environment() -> bool:
 
 
 if __name__ == "__main__":
-    sys.exit(0 if check_environment() else 1)
+    sys.exit(0 if check_environment(include_optional=True) else 1)
