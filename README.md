@@ -51,9 +51,9 @@ run_ingest_wetrace.bat
 
 按你的业务维护这三个本地字典：
 
-- `dictionaries/known_stores.local.json`：店名与别名
-- `dictionaries/products.local.json`：品名与别名
-- `dictionaries/specs.local.json`：规格归一化（可选但推荐）
+- 店名字典：`dictionaries\known_stores.local.json`
+- 品名字典：`dictionaries\products.local.json`
+- 规格字典：`dictionaries\specs.local.json`（可选但推荐）
 
 字典强绑定说明：
 
@@ -63,7 +63,7 @@ run_ingest_wetrace.bat
 
 硬性要求（必须先做）：
 
-- 在运行任何 BAT 前，必须先维护好本地字典（至少先维护 `known_stores.local.json` 和 `products.local.json`）。
+- 在运行任何 BAT 前，必须先维护好本地字典（至少先维护 `dictionaries\known_stores.local.json` 和 `dictionaries\products.local.json`，规格字典是 `dictionaries\specs.local.json`）。
 - 如果字典没维护或内容不完整，流程会出现“无法命中店名/品名、无可入账结果、被跳过”等情况，表现为看起来“程序在跑但不入账”。
 - 建议先用少量真实样本把字典补齐，再跑日常流程。
 
