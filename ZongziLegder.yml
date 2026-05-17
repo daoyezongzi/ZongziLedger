@@ -251,7 +251,7 @@ workflow:
       positionAbsolute:
         x: -23.77695246750443
         y: 329.1124558886761
-      selected: true
+      selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -274,10 +274,10 @@ workflow:
       height: 114
       id: '1778335626179'
       position:
-        x: 2604.8047561316043
+        x: 2605.464510086991
         y: 350.1124558886761
       positionAbsolute:
-        x: 2604.8047561316043
+        x: 2605.464510086991
         y: 350.1124558886761
       selected: false
       sourcePosition: right
@@ -340,7 +340,7 @@ workflow:
           raw_messages:
             children: null
             type: array[object]
-        selected: false
+        selected: true
         title: 代码执行
         type: code
         variables:
@@ -367,7 +367,7 @@ workflow:
       positionAbsolute:
         x: 264.43481594211016
         y: 350.1124558886761
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -529,6 +529,13 @@ workflow:
             variable_selector:
             - '1778760471061'
             - is_candidate
+          - comparison_operator: not empty
+            id: 7f25866e-c74f-4f4a-ae0c-78d6b4e0c794
+            value: ''
+            varType: string
+            variable_selector:
+            - '1778334535508'
+            - normalization_context_json
           id: 'true'
           logical_operator: and
         isInIteration: true
@@ -537,7 +544,7 @@ workflow:
         selected: false
         title: 条件分支 2
         type: if-else
-      height: 148
+      height: 190
       id: '1778761597245'
       parentId: '1778760352952'
       position:
@@ -572,14 +579,17 @@ workflow:
           id: f116a64d-b1be-4aee-a946-9e90cf0d2b49
           role: system
           text: "你是账单清洗器。输入是一段疑似记账文本。\n\n只输出结构化结果，不输出解释、不输出思考过程、不输出多余文字。\n\n目标：\n\
-            1) 生成可被本地解析器处理的 normalized_block。\n2) 保留原意，不凭空新增商品、数量、金额。\n3) 无法可靠清洗时，normalized_block\
-            \ 返回空字符串，并在 warnings 说明原因。\n\n硬规则：\nA. 店名\n- 尽量保留店名首行（若可识别）。\n- 店名不是商品，不要计入商品行。\n\
-            \nB. 结束行\n- 若末行不是“结束”，补一行“结束”。\n\nC. 备注识别（重点）\n- 片段若含以下说明性词语，优先判定为备注，不作为商品：\n\
-            \  - 带X月费用、旧货处理、备注、上月、欠款\n- 备注内容不要写入 normalized_block。\n- 备注原文写入 warnings。\n\
-            - 并提取 remark_prefix（例如：带4月费用旧货处理）；没有则空字符串。\n\nD. 商品拆分\n- 对“、，；”连接的并列片段先拆分，再逐段处理。\n\
-            - 例如：500绿茶1、蜜茶1、500红茶2 必须拆成三段处理。\n\nE. 规格识别与归一\n- 1l / 1L / 1 L 统一为 1L\n\
-            - 2l / 2L / 2 L 统一为 2L\n- 品名前裸数字 500/900 视为容量规格，归一为 500ml/900ml\n- 前置规格必须绑定商品，不能丢失\n\
-            \nF. 不确定处理\n- 无法确定规格或数量归属时，不要硬猜：\n  - 能保留原片段则写 warnings\n  - 严重不确定时 normalized_block\
+            1) 生成可被本地解析器处理的 normalized_block（仅商品内容，不包含块头块尾）。\n2) 保留原意，不凭空新增商品、数量、金额。\n\
+            3) 无法可靠清洗时，normalized_block 返回空字符串，并在 warnings 说明原因。\n\n硬规则：\nA. 店名\n\
+            - 尽量识别并输出 store_name。\n- 店名不是商品，不要计入 normalized_block。\n\nB. 商品解析顺序（必须遵守）\n\
+            - 先识别品名（按常见饮料商品名/别名）。\n- 再识别规格（如 500/500ml/900/900ml/1l/1L/2l/2L/12入）。\n\
+            - 再识别数量（如 2、2件、3箱）。\n- 同一行中“规格+品名+数量”可粘连，需拆解归一。\n- 输出商品行统一为：规格 + 品名 +\
+            \ 数量（如：500ml蜜茶2、1L红茶3件）。\n\nC. 规格归一\n- 1l / 1 L / 1L -> 1L\n- 2l / 2 L\
+            \ / 2L -> 2L\n- 品名前裸数字 500/900 -> 500ml/900ml\n- 规格不能丢失；若文本有规格上下文（如单独一行“1L”），后续商品可继承该规格，直到下一个规格行出现。\n\
+            \nD. 商品拆分\n- 对“、，；”连接的并列片段先拆分，再逐段处理。\n- 例如：500绿茶1、蜜茶1、500红茶2 必须拆成三条商品行。\n\
+            \nE. 备注识别（重点）\n- 片段若含以下说明性词语，优先判定为备注，不作为商品：\n  - 带X月费用、旧货处理、备注、上月、欠款\n\
+            - 备注内容不要写入 normalized_block。\n- 备注原文写入 warnings。\n- 并提取 remark_prefix（例如：带4月费用旧货处理）；没有则空字符串。\n\
+            \nF. 不确定处理\n- 无法确定规格或数量归属时，不要硬猜：\n  - 保留原片段到 warnings\n  - 严重不确定时 normalized_block\
             \ 置空\n\n输出字段要求：\n- normalized_block: string\n- warnings: string[]\n- store_name:\
             \ string\n- remark_prefix: string\n- normalize_hint: string"
         - edition_type: basic
@@ -683,75 +693,83 @@ workflow:
         code: "def main(\n    entry: dict = None,\n    clean_structured: dict = None,\n\
           \    clean_text: str = \"\",\n    store_name: str = \"\",\n    clean_s:\
           \ dict = None\n) -> dict:\n    import json\n    import re\n    import hashlib\n\
-          \    from datetime import datetime\n\n    HEADER_RE = re.compile(r\"^[#＃]?\\\
-          s*记账\\s*(\\d{8})\\s*$\")\n    ITEM_RE = re.compile(\n        r\".*?\\d+(?:\\\
-          .\\d+)?\\s*(?:件|包|袋|箱|瓶|听|支|条|盒|份|杯|个|桶|罐|斤|两|公斤|kg|KG|g|G|l|L|ml|ML|pcs|PCS)?\\\
-          s*$\"\n    )\n\n    def s(v):\n        return str(v or \"\").replace(\"\\\
-          r\\n\", \"\\n\").replace(\"\\r\", \"\\n\").strip()\n\n    # 兼容节点里变量名是 clean_s\n\
-          \    if clean_structured is None and isinstance(clean_s, dict):\n      \
-          \  clean_structured = clean_s\n\n    def extract_block(st, txt, fallback):\n\
-          \        warnings = []\n        block = \"\"\n        llm_store_name = \"\
-          \"\n        remark_prefix = \"\"\n\n        if isinstance(st, dict):\n \
-          \           block = s(st.get(\"normalized_block\") or st.get(\"message\"\
-          ) or st.get(\"content\"))\n            llm_store_name = s(st.get(\"store_name\"\
-          ))\n            remark_prefix = s(st.get(\"remark_prefix\"))\n         \
-          \   raw_w = st.get(\"warnings\", [])\n            if isinstance(raw_w, list):\n\
-          \                warnings = [s(x) for x in raw_w if s(x)]\n            elif\
-          \ s(raw_w):\n                warnings = [s(raw_w)]\n        elif isinstance(st,\
-          \ str):\n            t = s(st)\n            if t.startswith(\"{\") and t.endswith(\"\
-          }\"):\n                try:\n                    obj = json.loads(t)\n \
-          \                   if isinstance(obj, dict):\n                        block\
-          \ = s(obj.get(\"normalized_block\") or obj.get(\"message\") or obj.get(\"\
-          content\"))\n                        llm_store_name = s(obj.get(\"store_name\"\
-          ))\n                        remark_prefix = s(obj.get(\"remark_prefix\"\
-          ))\n                        raw_w = obj.get(\"warnings\", [])\n        \
-          \                if isinstance(raw_w, list):\n                         \
-          \   warnings = [s(x) for x in raw_w if s(x)]\n                        elif\
-          \ s(raw_w):\n                            warnings = [s(raw_w)]\n       \
-          \         except Exception:\n                    block = t\n           \
-          \ else:\n                block = t\n\n        if not block:\n          \
-          \  block = s(txt)\n        if not block:\n            block = s(fallback)\n\
-          \n        return block, warnings, llm_store_name, remark_prefix\n\n    def\
-          \ normalize_block(text):\n        lines = [x.strip() for x in s(text).split(\"\
-          \\n\") if x.strip()]\n        if not lines:\n            return \"\", \"\
-          empty\", 0\n\n        m = HEADER_RE.fullmatch(lines[0])\n        if m:\n\
-          \            order_id = m.group(1)\n            lines[0] = f\"#记账{order_id}\"\
-          \n            if lines[-1] != \"结束\":\n                lines.append(\"结束\"\
-          )\n            item_hits = sum(1 for x in lines[1:-1] if ITEM_RE.search(x))\n\
-          \            if item_hits >= 1:\n                return \"\\n\".join(lines),\
-          \ \"header\", item_hits\n            return \"\", \"header_no_items\", item_hits\n\
-          \n        item_hits = sum(1 for x in lines[1:] if ITEM_RE.search(x))\n \
-          \       if item_hits >= 1:\n            if lines[-1] != \"结束\":\n      \
-          \          lines.append(\"结束\")\n            return \"\\n\".join(lines),\
-          \ \"no_header\", item_hits\n\n        return \"\", \"not_ledger\", item_hits\n\
-          \n    e = entry if isinstance(entry, dict) else {}\n    now = datetime.now().strftime(\"\
-          %Y-%m-%d %H:%M:%S\")\n\n    raw_block, warnings, store_name_from_llm, remark_prefix\
-          \ = extract_block(\n        clean_structured, clean_text, e.get(\"message\"\
-          )\n    )\n    normalized_block, mode, item_hits = normalize_block(raw_block)\n\
-          \n    ts = s(e.get(\"timestamp\")) or now\n    sid = s(e.get(\"source_id\"\
-          )) or \"dify\"\n    base_for_hash = normalized_block or s(e.get(\"message\"\
-          ))\n    mhash = s(e.get(\"message_hash\")) or (\n        hashlib.sha1(base_for_hash.encode(\"\
-          utf-8\", errors=\"ignore\")).hexdigest()\n        if base_for_hash else\
-          \ \"\"\n    )\n    captured = s(e.get(\"message_captured_at\")) or now\n\
-          \    name = s(e.get(\"name\"))\n    store_name = s(e.get(\"store_name\"\
-          )) or s(store_name) or store_name_from_llm\n\n    if not normalized_block:\n\
-          \        return {\n            \"result_item\": {\n                \"is_candidate\"\
-          : False,\n                \"normalized_block\": \"\",\n                \"\
-          message\": \"\",\n                \"timestamp\": ts,\n                \"\
-          source_id\": sid,\n                \"message_hash\": mhash,\n          \
-          \      \"message_captured_at\": captured,\n                \"name\": name,\n\
-          \                \"store_name\": store_name,\n                \"remark_prefix\"\
-          : remark_prefix,\n                \"warnings\": warnings,\n            \
-          \    \"skip_reason\": mode,\n                \"item_hits\": item_hits,\n\
-          \            }\n        }\n\n    return {\n        \"result_item\": {\n\
-          \            \"is_candidate\": True,\n            \"normalized_block\":\
-          \ normalized_block,\n            \"message\": normalized_block,\n      \
-          \      \"timestamp\": ts,\n            \"source_id\": sid,\n           \
-          \ \"message_hash\": mhash,\n            \"message_captured_at\": captured,\n\
-          \            \"name\": name,\n            \"store_name\": store_name,\n\
+          \    from datetime import datetime\n\n    def s(v):\n        return str(v\
+          \ or \"\").replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\").strip()\n\
+          \n    def to_list(v):\n        if isinstance(v, list):\n            return\
+          \ [s(x) for x in v if s(x)]\n        t = s(v)\n        return [t] if t else\
+          \ []\n\n    # 兼容你节点里可能传 clean_s\n    if clean_structured is None and isinstance(clean_s,\
+          \ dict):\n        clean_structured = clean_s\n\n    def extract_block(st,\
+          \ txt, fallback):\n        warnings = []\n        block = \"\"\n       \
+          \ llm_store_name = \"\"\n        remark_prefix = \"\"\n\n        if isinstance(st,\
+          \ dict):\n            block = s(st.get(\"normalized_block\") or st.get(\"\
+          message\") or st.get(\"content\"))\n            llm_store_name = s(st.get(\"\
+          store_name\"))\n            remark_prefix = s(st.get(\"remark_prefix\"))\n\
+          \            warnings = to_list(st.get(\"warnings\", []))\n        elif\
+          \ isinstance(st, str):\n            t = s(st)\n            if t.startswith(\"\
+          {\") and t.endswith(\"}\"):\n                try:\n                    obj\
+          \ = json.loads(t)\n                    if isinstance(obj, dict):\n     \
+          \                   block = s(obj.get(\"normalized_block\") or obj.get(\"\
+          message\") or obj.get(\"content\"))\n                        llm_store_name\
+          \ = s(obj.get(\"store_name\"))\n                        remark_prefix =\
+          \ s(obj.get(\"remark_prefix\"))\n                        warnings = to_list(obj.get(\"\
+          warnings\", []))\n                except Exception:\n                  \
+          \  block = t\n            else:\n                block = t\n\n        if\
+          \ not block:\n            block = s(txt)\n        if not block:\n      \
+          \      block = s(fallback)\n\n        return block, warnings, llm_store_name,\
+          \ remark_prefix\n\n    # 候选判定：有店名、或有至少1条“品名+数量”行\n    ITEM_LINE_RE = re.compile(r\"\
+          .*?[\\u4e00-\\u9fa5A-Za-z0-9].*?\\d+(?:\\.\\d+)?\\s*(?:件|箱|瓶|包|提)?\\s*$\"\
+          )\n\n    def is_candidate(lines, merged_store_name):\n        if s(merged_store_name):\n\
+          \            return True\n        hit = 0\n        for ln in lines:\n  \
+          \          if ITEM_LINE_RE.match(ln):\n                hit += 1\n      \
+          \  return hit >= 1\n\n    def ensure_block(text):\n        lines = [x.strip()\
+          \ for x in s(text).split(\"\\n\") if x.strip()]\n        if not lines:\n\
+          \            return \"\", 0\n\n        # 去掉已有头尾，后面统一重建\n        if lines\
+          \ and lines[0].lstrip(\"#＃\").strip() == \"记账\":\n            lines = lines[1:]\n\
+          \        if lines and lines[-1] == \"结束\":\n            lines = lines[:-1]\n\
+          \n        # 统计商品命中\n        item_hits = sum(1 for x in lines if ITEM_LINE_RE.match(x))\n\
+          \        if item_hits < 1:\n            return \"\", item_hits\n\n     \
+          \   out = [\"#记账\"] + lines + [\"结束\"]\n        return \"\\n\".join(out),\
+          \ item_hits\n\n    e = entry if isinstance(entry, dict) else {}\n    now\
+          \ = datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n\n    raw_block, warnings,\
+          \ store_name_from_llm, remark_prefix = extract_block(\n        clean_structured,\
+          \ clean_text, e.get(\"message\")\n    )\n\n    ts = s(e.get(\"timestamp\"\
+          )) or now\n    sid = s(e.get(\"source_id\")) or \"dify\"\n    captured =\
+          \ s(e.get(\"message_captured_at\")) or now\n    name = s(e.get(\"name\"\
+          ))\n    merged_store_name = s(e.get(\"store_name\")) or s(store_name) or\
+          \ store_name_from_llm\n\n    lines_for_judge = [x.strip() for x in s(raw_block).split(\"\
+          \\n\") if x.strip()]\n    if not is_candidate(lines_for_judge, merged_store_name):\n\
+          \        warnings = warnings + [\"non-ledger message\"]\n        return\
+          \ {\n            \"result_item\": {\n                \"is_candidate\": False,\n\
+          \                \"normalized_block\": \"\",\n                \"message\"\
+          : \"\",\n                \"timestamp\": ts,\n                \"source_id\"\
+          : sid,\n                \"message_hash\": s(e.get(\"message_hash\")),\n\
+          \                \"message_captured_at\": captured,\n                \"\
+          name\": name,\n                \"store_name\": merged_store_name,\n    \
+          \            \"remark_prefix\": remark_prefix,\n                \"warnings\"\
+          : warnings,\n                \"skip_reason\": \"non_candidate\",\n     \
+          \           \"item_hits\": 0,\n            }\n        }\n\n    normalized_block,\
+          \ item_hits = ensure_block(raw_block)\n    base_for_hash = normalized_block\
+          \ or s(e.get(\"message\"))\n    mhash = s(e.get(\"message_hash\")) or (\n\
+          \        hashlib.sha1(base_for_hash.encode(\"utf-8\", errors=\"ignore\"\
+          )).hexdigest()\n        if base_for_hash else \"\"\n    )\n\n    if not\
+          \ normalized_block:\n        warnings = warnings + [\"candidate but no parseable\
+          \ item lines\"]\n        return {\n            \"result_item\": {\n    \
+          \            \"is_candidate\": False,\n                \"normalized_block\"\
+          : \"\",\n                \"message\": \"\",\n                \"timestamp\"\
+          : ts,\n                \"source_id\": sid,\n                \"message_hash\"\
+          : mhash,\n                \"message_captured_at\": captured,\n         \
+          \       \"name\": name,\n                \"store_name\": merged_store_name,\n\
+          \                \"remark_prefix\": remark_prefix,\n                \"warnings\"\
+          : warnings,\n                \"skip_reason\": \"no_items\",\n          \
+          \      \"item_hits\": item_hits,\n            }\n        }\n\n    return\
+          \ {\n        \"result_item\": {\n            \"is_candidate\": True,\n \
+          \           \"normalized_block\": normalized_block,\n            \"message\"\
+          : normalized_block,\n            \"timestamp\": ts,\n            \"source_id\"\
+          : sid,\n            \"message_hash\": mhash,\n            \"message_captured_at\"\
+          : captured,\n            \"name\": name,\n            \"store_name\": merged_store_name,\n\
           \            \"remark_prefix\": remark_prefix,\n            \"warnings\"\
-          : warnings,\n            \"normalize_mode\": mode,\n            \"item_hits\"\
-          : item_hits,\n        }\n    }"
+          : warnings,\n            \"normalize_mode\": \"candidate_wrapped\",\n  \
+          \          \"item_hits\": item_hits,\n        }\n    }"
         code_language: python3
         isInIteration: true
         isInLoop: false
@@ -802,32 +820,30 @@ workflow:
     - data:
         code: "def unwrap(x):\n    if isinstance(x, dict) and isinstance(x.get(\"\
           result_item\"), dict):\n        return x[\"result_item\"]\n    return x\
-          \ if isinstance(x, dict) else {}\n\ndef main(iter_items: list = None) ->\
-          \ dict:\n    rows = [unwrap(x) for x in (iter_items or [])]\n    rows =\
-          \ [x for x in rows if x]\n\n    normalized_messages = []\n    skipped_non_candidate\
-          \ = 0\n    skipped_empty = 0\n    skipped_not_ledger = 0\n\n    for x in\
-          \ rows:\n        is_cand = x.get(\"is_candidate\")\n        if is_cand is\
-          \ False:\n            skipped_non_candidate += 1\n            continue\n\
-          \n        msg = str(x.get(\"normalized_block\") or x.get(\"message\") or\
-          \ \"\").strip()\n        if not msg:\n            skipped_empty += 1\n \
-          \           continue\n\n        normalized_messages.append({\n         \
-          \   \"message\": msg,\n            \"normalized_block\": msg,\n        \
-          \    \"timestamp\": str(x.get(\"timestamp\") or \"\"),\n            \"source_id\"\
-          : str(x.get(\"source_id\") or \"dify\"),\n            \"message_hash\":\
-          \ str(x.get(\"message_hash\") or \"\"),\n            \"message_captured_at\"\
-          : str(x.get(\"message_captured_at\") or \"\"),\n            \"name\": str(x.get(\"\
-          name\") or \"\"),\n            \"store_name\": str(x.get(\"store_name\"\
-          ) or \"\"),\n            \"remark_prefix\": str(x.get(\"remark_prefix\"\
-          ) or \"\"),\n            \"warnings\": x.get(\"warnings\", []),\n      \
-          \      \"normalize_mode\": str(x.get(\"normalize_mode\") or \"\"),\n   \
-          \         \"item_hits\": int(x.get(\"item_hits\") or 0),\n        })\n\n\
-          \    return {\n        \"normalized_messages\": normalized_messages,\n \
-          \       \"normalization_summary\": {\n            \"schema_version\": \"\
-          zongziledger-dify-clean-v2\",\n            \"input_messages_count\": len(rows),\n\
+          \ if isinstance(x, dict) else {}\n\ndef s(v):\n    return str(v or \"\"\
+          ).strip()\n\ndef main(iter_items: list = None) -> dict:\n    rows = [unwrap(x)\
+          \ for x in (iter_items or [])]\n    rows = [x for x in rows if x]\n\n  \
+          \  normalized_messages = []\n    skipped_non_candidate = 0\n    skipped_empty\
+          \ = 0\n\n    for x in rows:\n        if x.get(\"is_candidate\") is False:\n\
+          \            skipped_non_candidate += 1\n            continue\n\n      \
+          \  msg = s(x.get(\"normalized_block\") or x.get(\"message\"))\n        if\
+          \ not msg:\n            skipped_empty += 1\n            continue\n\n   \
+          \     normalized_messages.append({\n            \"message\": msg,\n    \
+          \        \"normalized_block\": msg,\n            \"timestamp\": s(x.get(\"\
+          timestamp\")),\n            \"source_id\": s(x.get(\"source_id\")) or \"\
+          dify\",\n            \"message_hash\": s(x.get(\"message_hash\")),\n   \
+          \         \"message_captured_at\": s(x.get(\"message_captured_at\")),\n\
+          \            \"name\": s(x.get(\"name\")),\n            \"store_name\":\
+          \ s(x.get(\"store_name\")),\n            \"remark_prefix\": s(x.get(\"remark_prefix\"\
+          )),\n            \"warnings\": x.get(\"warnings\", []) if isinstance(x.get(\"\
+          warnings\"), list) else [],\n            \"normalize_mode\": s(x.get(\"\
+          normalize_mode\")),\n            \"item_hits\": int(x.get(\"item_hits\"\
+          ) or 0),\n        })\n\n    return {\n        \"normalized_messages\": normalized_messages,\n\
+          \        \"normalization_summary\": {\n            \"schema_version\": \"\
+          zongziledger-dify-clean-v3\",\n            \"input_messages_count\": len(rows),\n\
           \            \"normalized_count\": len(normalized_messages),\n         \
           \   \"skipped_non_candidate_count\": skipped_non_candidate,\n          \
-          \  \"skipped_empty_message_count\": skipped_empty,\n            \"skipped_not_ledger_count\"\
-          : skipped_not_ledger,\n        },\n    }"
+          \  \"skipped_empty_message_count\": skipped_empty\n        },\n    }"
         code_language: python3
         outputs:
           normalization_summary:
@@ -887,7 +903,7 @@ workflow:
       width: 242
       zIndex: 1002
     viewport:
-      x: -753.9023780658057
-      y: 245.94377205566144
-      zoom: 0.5000000000000013
+      x: -483.7452766476306
+      y: 78.1741741233624
+      zoom: 0.7578582832551997
   rag_pipeline_variables: []
