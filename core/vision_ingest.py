@@ -114,7 +114,7 @@ def _load_state(path: Path) -> Set[str]:
         return set()
 
     try:
-        with path.open("r", encoding="utf-8") as f:
+        with path.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
     except Exception:
         return set()

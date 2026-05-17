@@ -181,3 +181,9 @@ run_wetrace_daily_once.bat
 
 - 当前链路里，`502` 通常是 Dify 侧返回异常或返回体不符合预期导致，不是本地 CSV 写盘本身的问题。
 - 先检查 Dify 工作流是否可正常运行、API Key/URL 是否有效、工作流输出字段是否符合你当前接入格式。
+
+7. 报 `timed out`（超时）怎么处理？
+
+- 先在 `config.yaml` 提高 `dify_ingest_timeout_seconds`（例如从 `30` 提到 `120`）。
+- 如仍偶发超时，再把 `dify_remote_timeout_seconds` 提高到 `60` 或 `120`。
+- 跑 daily-once 时先用小批次（降低 `limit`），确认本地链路可稳定写入后再放大。

@@ -19,6 +19,9 @@ COUNT_UNITS_RE = r"件|包|袋|箱|瓶|听|支|条|盒|份|杯|个|桶|罐|斤|�
 COUNT_LINE_RE = re.compile(
     rf"^(.+?)(?:\s*[xX*×]\s*|\s+)?(\d+(?:\.\d+)?)(?:\s*({COUNT_UNITS_RE}))?$"
 )
+GLUED_COUNT_LINE_RE = re.compile(
+    rf"^(.+?)(\d+(?:\.\d+)?)(?:\s*({COUNT_UNITS_RE}))?$"
+)
 CATEGORY_HEADER_RE = re.compile(r"^(.+?)[：:]\s*$")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -27,11 +30,13 @@ LEGACY_ORDER_ID_LINE_RE = re.compile(r"^\d{8}$")
 VOLUME_TOKEN_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([mM]?[lL])$")
 DOUBLE_VOLUME_LINE_RE = re.compile(r"^(\d{2,4})\s+(\d+(?:\.\d+)?\s*[lL])$")
 VOLUME_SUFFIX_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([mM]?[lL])(?=$|[^A-Za-z0-9])")
+LEADING_VOLUME_RE = re.compile(r"^(\d+(?:\.\d+)?\s*(?:[mM]?[lL]))\s*(.+)$")
 ITEM_BARE_ML_RE = re.compile(r"(?<!\d)(500|900)(?!\d)(?!\s*[mM]?[lL])")
 INLINE_ITEM_SPLIT_RE = re.compile(r"[、，,；;銆]+")
 REMARK_PREFIX_SPLIT_RE = re.compile(
     r"(?:^|\s)(?:补货测试|第[一二三四五六七八九十0-9]+批次|批次|备注|带\d+月费用|旧货处理|上月|欠款)(?:\s+|$)"
 )
+LEADING_SPEC_RE = re.compile(r"^((?:\d+(?:\.\d+)?\s*(?:[mM]?[lL]))|(?:\d{2,4})|(?:\d+\s*入))\s*(.+)$")
 KNOWN_STANDALONE_ML_VALUES = {
     250,
     330,
@@ -318,6 +323,92 @@ def _normalize_volume_token(token: str) -> str:
     return f"{compact_amount}L"
 
 
+def _normalize_leading_spec_token(token: str) -> str:
+    text = _normalize_payload_line(token).replace("Ｌ", "L").replace("ｌ", "l")
+    if not text:
+        return ""
+
+    volume_token = _normalize_volume_token(text)
+    if volume_token:
+        return volume_token
+
+    if re.fullmatch(r"\d+\s*入", text):
+        return _trim_edge(text).replace(" ", "")
+
+    if re.fullmatch(r"\d{2,4}", text):
+        value = int(text)
+        if value in KNOWN_STANDALONE_ML_VALUES:
+            return f"{value}ml"
+
+    return ""
+
+
+def _split_leading_spec_and_product(text: str, current_spec: str = "") -> Tuple[str, str]:
+    normalized = _trim_edge(_normalize_payload_line(text))
+    if not normalized:
+        return "", ""
+
+    matched = LEADING_SPEC_RE.fullmatch(normalized)
+    if matched:
+        spec = _normalize_leading_spec_token(matched.group(1))
+        product = _trim_edge(matched.group(2))
+        if product:
+            return spec, product
+
+    if current_spec:
+        return current_spec, normalized
+
+    return "", normalized
+
+
+def _parse_payload_segment(segment: str, current_spec: str = "", category_prefix: str = "") -> Optional[Tuple[str, float]]:
+    cleaned = _trim_edge(_normalize_payload_line(segment))
+    if not cleaned:
+        return None
+
+    cleaned, _remark_prefix = _strip_remark_prefix_for_match(cleaned)
+    if not cleaned:
+        return None
+
+    matched = COUNT_LINE_RE.match(cleaned)
+    if not matched:
+        matched = GLUED_COUNT_LINE_RE.match(cleaned)
+    if not matched:
+        return None
+
+    item_raw, count_raw, unit_raw = matched.groups()
+    item_raw = _trim_edge(" ".join(item_raw.strip().split()))
+    if not item_raw or item_raw.isdigit():
+        return None
+
+    try:
+        count = float(count_raw)
+    except ValueError:
+        return None
+
+    if str(unit_raw or "").lower() in {"l", "ml"} and count == 1.0 and re.search(r"\d$", item_raw):
+        return None
+
+    spec_prefix, product_text = _split_leading_spec_and_product(item_raw, current_spec=current_spec)
+    product_text = _trim_edge(product_text)
+    if not product_text:
+        return None
+
+    product_text = ITEM_BARE_ML_RE.sub(lambda m: f"{m.group(1)}ml", product_text)
+    for raw_spec, normalized_spec in _get_spec_alias_map().items():
+        if raw_spec and normalized_spec:
+            product_text = re.sub(rf"(?<!\w){re.escape(raw_spec)}(?!\w)", normalized_spec, product_text)
+
+    product_text = _canonicalize_item_with_dictionary(product_text)
+    if not _is_dictionary_item(product_text):
+        return None
+
+    item = f"{spec_prefix}：{product_text}" if spec_prefix else product_text
+    if category_prefix and ("：" not in item and ":" not in item):
+        item = f"{category_prefix}：{item}"
+    return item, count
+
+
 def _as_volume_header(line: str) -> str:
     normalized = _normalize_payload_line(line)
     if not normalized:
@@ -350,6 +441,9 @@ def _parse_count_line(line: str) -> Optional[Tuple[str, float]]:
         return None
 
     matched = COUNT_LINE_RE.match(cleaned)
+    if not matched:
+        # Support glued patterns like "500ml蜜茶2" / "1L茉莉蜜茶2件".
+        matched = GLUED_COUNT_LINE_RE.match(cleaned)
     if not matched:
         return None
 
@@ -384,9 +478,17 @@ def _parse_count_line(line: str) -> Optional[Tuple[str, float]]:
 
     # 商品名按字典强绑定（别名 -> 标准名）
     item = _canonicalize_item_with_dictionary(item)
-    # 强门槛：仅词典命中的标准品名允许入账。
+    # 兼容“规格+品名粘连”场景：500ml蜜茶 / 1L茉莉蜜茶
     if not _is_dictionary_item(item):
-        return None
+        merged = LEADING_VOLUME_RE.match(item)
+        if merged:
+            volume_token = _normalize_volume_token(merged.group(1))
+            core_name = _canonicalize_item_with_dictionary(_trim_edge(merged.group(2)))
+            if core_name and _is_dictionary_item(core_name):
+                item = f"{volume_token}：{core_name}" if volume_token else core_name
+        # 强门槛：仅词典命中的标准品名允许入账。
+        if not _is_dictionary_item(item):
+            return None
 
     return item, count
 
@@ -420,6 +522,7 @@ def _extract_name_from_payload(payload_lines: List[str]) -> Tuple[str, List[str]
 def _parse_payload_lines(payload_lines: List[str]) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     category_prefix = ""
+    current_spec = ""
     for line in payload_lines:
         normalized = _normalize_payload_line(line)
         if not normalized:
@@ -430,6 +533,7 @@ def _parse_payload_lines(payload_lines: List[str]) -> List[Dict[str, Any]]:
         volume_header = _as_volume_header(normalized)
         if volume_header:
             category_prefix = volume_header
+            current_spec = volume_header
             continue
 
         category_match = CATEGORY_HEADER_RE.fullmatch(normalized)
@@ -443,14 +547,10 @@ def _parse_payload_lines(payload_lines: List[str]) -> List[Dict[str, Any]]:
             segments = [part for part in split_parts if part]
 
         for segment in segments:
-            parsed = _parse_count_line(segment)
+            parsed = _parse_payload_segment(segment, current_spec=current_spec, category_prefix=category_prefix)
             if parsed is None:
                 continue
             item, count = parsed
-
-            if category_prefix and ("：" not in item and ":" not in item):
-                item = f"{category_prefix}：{item}"
-
             records.append({"item": item, "amount": count, "record_type": "count"})
 
     return records
@@ -465,8 +565,11 @@ def _parse_block(
     if len(lines) < 3:
         return [], "", "", ""
 
+    header_line = _normalize_payload_line(lines[0])
     order_id = _extract_order_id(lines[0], start_marker)
-    if not order_id:
+    marker_only_header = bool(header_line) and header_line.lstrip("#＃").strip() == (start_marker or "").strip()
+    # Accept marker-only header (e.g. "#记账") as a valid block without requiring order_id.
+    if not order_id and not marker_only_header:
         return [], "", "", ""
     if lines[-1] != end_marker:
         return [], "", "", ""
@@ -533,7 +636,7 @@ def parse_ledger_message_multi(
     results: List[Dict[str, Any]] = []
     for block in blocks:
         entries, cleaned_block, order_id, customer_name = _parse_block(block, start_marker, end_marker)
-        if not entries or not cleaned_block or not order_id:
+        if not entries or not cleaned_block:
             continue
 
         for entry in entries:
@@ -550,6 +653,41 @@ def parse_ledger_message_multi(
 
     if results:
         return results
+
+    # Fallback: marker-only block ("#记账 ... 结束") without order id.
+    # Strip marker/end lines and parse body as plain message.
+    marker_text = (start_marker or DEFAULT_START_MARKER).strip()
+    if blocks and marker_text:
+        for block in blocks:
+            block_lines = _split_block_lines(block)
+            if len(block_lines) < 3:
+                continue
+            first_line = _normalize_payload_line(block_lines[0]).lstrip("#＃").strip()
+            last_line = _normalize_payload_line(block_lines[-1]).strip()
+            if first_line != marker_text or last_line != end_marker:
+                continue
+            body_text = "\n".join(block_lines[1:-1]).strip()
+            if not body_text:
+                continue
+            entries, cleaned_block, order_id, customer_name = _parse_plain_message_block(
+                body_text,
+                start_marker,
+            )
+            if not entries or not cleaned_block:
+                continue
+            for entry in entries:
+                results.append(
+                    {
+                        "item": entry["item"],
+                        "amount": entry["amount"],
+                        "record_type": "count",
+                        "raw_message": block.strip(),
+                        "order_id": order_id,
+                        "name": customer_name,
+                    }
+                )
+        if results:
+            return results
 
     # Fallback: allow plain-text ledger without start/end markers or order id.
     entries, cleaned_block, order_id, customer_name = _parse_plain_message_block(

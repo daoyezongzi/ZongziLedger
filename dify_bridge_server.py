@@ -355,7 +355,7 @@ def _append_audit_record(audit_path: Path, payload: Dict[str, Any]) -> None:
     existing_records: List[Dict[str, Any]] = []
     if audit_path.exists():
         try:
-            with audit_path.open("r", encoding="utf-8") as f:
+            with audit_path.open("r", encoding="utf-8-sig") as f:
                 previous_payload = json.load(f)
             if isinstance(previous_payload, dict) and isinstance(previous_payload.get("records"), list):
                 existing_records = [x for x in previous_payload.get("records", []) if isinstance(x, dict)]
@@ -364,7 +364,7 @@ def _append_audit_record(audit_path: Path, payload: Dict[str, Any]) -> None:
         except Exception:
             # 向后兼容旧版 jsonl：逐行读取可解析对象
             try:
-                with audit_path.open("r", encoding="utf-8", errors="ignore") as f:
+                with audit_path.open("r", encoding="utf-8-sig", errors="ignore") as f:
                     for line in f:
                         line = line.strip()
                         if not line:
@@ -574,6 +574,13 @@ def _is_valid_ledger_block_message(
     text = _safe_text(message_text)
     if not text:
         return False
+    normalized = text.replace("\r\n", "\n").strip()
+    lines = [ln.strip() for ln in normalized.split("\n") if ln.strip()]
+    if lines:
+        first = lines[0].lstrip("#＃").strip()
+        marker = (start_marker or "").strip()
+        if marker and first == marker and lines[-1] == (end_marker or "").strip():
+            return True
     parsed = parse_ledger_message_multi(text, start_marker=start_marker, end_marker=end_marker)
     return bool(parsed)
 

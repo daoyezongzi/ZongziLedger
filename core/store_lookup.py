@@ -136,7 +136,8 @@ def build_known_store_lookup(
         return lookup
 
     try:
-        with path.open("r", encoding="utf-8") as f:
+        # Use utf-8-sig to be robust to BOM/non-BOM JSON files.
+        with path.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
     except Exception as exc:
         _trace(trace, f"[STORE] failed to load known store file: {path}, error={exc}")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -63,17 +62,19 @@ def _bill_date_text(bill: Dict[str, Any]) -> str:
     return ""
 
 
-def write_bill_excel_output(excel_path: Path, bills: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Write canonical bill payloads to xlsx with summary + bills + items sheets."""
+def write_bill_excel_output(
+    excel_path: Path,
+    bills: List[Dict[str, Any]],
+    review_rows: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """Write business-facing xlsx with business_view + review sheets only."""
     from openpyxl import Workbook
 
     excel_path.parent.mkdir(parents=True, exist_ok=True)
     workbook = Workbook()
-    sheet_summary = workbook.active
-    sheet_summary.title = "summary"
-    sheet_bills = workbook.create_sheet("bills")
-    sheet_items = workbook.create_sheet("items")
-    sheet_business = workbook.create_sheet("business_view")
+    sheet_business = workbook.active
+    sheet_business.title = "business_view"
+    sheet_review = workbook.create_sheet("review")
 
     normalized_bills: List[Dict[str, Any]] = []
     for raw_bill in bills:
@@ -86,44 +87,10 @@ def write_bill_excel_output(excel_path: Path, bills: List[Dict[str, Any]]) -> Di
         bill["total_amount"] = sum(_to_float(x.get("amount", 0.0)) for x in bill_items)
         normalized_bills.append(bill)
 
-    bill_headers = [
-        "bill_primary_key",
-        "bill_key_type",
-        "order_id",
-        "chat_id",
-        "sender",
-        "name",
-        "timestamp",
-        "time_bucket",
-        "source_id",
-        "source_type",
-        "source_ref",
-        "message_hash",
-        "normalized_hash",
-        "item_count",
-        "total_amount",
-        "message_captured_at",
-        "recorded_at",
-        "raw_message",
-    ]
-    sheet_bills.append(bill_headers)
-
-    item_headers = [
-        "bill_primary_key",
-        "order_id",
-        "item_index",
-        "item",
-        "amount",
-        "timestamp",
-        "sender",
-        "chat_id",
-        "source_id",
-        "remark",
-    ]
-    sheet_items.append(item_headers)
-
     business_headers = ["store_name", "item", "amount", "remark"]
     sheet_business.append(business_headers)
+    review_headers = ["timestamp", "source_id", "message_hash", "store_name", "name", "reason", "message"]
+    sheet_review.append(review_headers)
 
     total_item_rows = 0
     total_amount = 0.0
@@ -137,46 +104,8 @@ def write_bill_excel_output(excel_path: Path, bills: List[Dict[str, Any]]) -> Di
         item_count = int(bill.get("item_count", 0))
         bill_total = _to_float(bill.get("total_amount", 0.0))
         total_amount += bill_total
-        sheet_bills.append(
-            [
-                _sanitize_text(bill.get("bill_primary_key", "")),
-                _sanitize_text(bill.get("bill_key_type", "")),
-                _sanitize_text(bill.get("order_id", "")),
-                _sanitize_text(bill.get("chat_id", "")),
-                _sanitize_text(bill.get("sender", "")),
-                _sanitize_text(bill.get("name", "")),
-                _sanitize_text(bill.get("timestamp", "")),
-                _sanitize_text(bill.get("time_bucket", "")),
-                _sanitize_text(bill.get("source_id", "")),
-                _sanitize_text(bill.get("source_type", "")),
-                _sanitize_text(bill.get("source_ref", "")),
-                _sanitize_text(bill.get("message_hash", "")),
-                _sanitize_text(bill.get("normalized_hash", "")),
-                item_count,
-                bill_total,
-                _sanitize_text(bill.get("message_captured_at", "")),
-                _sanitize_text(bill.get("recorded_at", "")),
-                _sanitize_text(bill.get("raw_message", "")),
-            ]
-        )
-
         for item_index, item in enumerate(bill.get("items", []), start=1):
             total_item_rows += 1
-            sheet_items.append(
-                [
-                    _sanitize_text(bill.get("bill_primary_key", "")),
-                    _sanitize_text(bill.get("order_id", "")),
-                    item_index,
-                    _sanitize_text(item.get("item", "")),
-                    _to_float(item.get("amount", 0.0)),
-                    _sanitize_text(bill.get("timestamp", "")),
-                    _sanitize_text(bill.get("sender", "")),
-                    _sanitize_text(bill.get("chat_id", "")),
-                    _sanitize_text(bill.get("source_id", "")),
-                    _sanitize_text(item.get("remark", "")),
-                ]
-            )
-
             sheet_business.append(
                 [
                     store_name,
@@ -208,22 +137,29 @@ def write_bill_excel_output(excel_path: Path, bills: List[Dict[str, Any]]) -> Di
             )
 
     # Keep worksheet focused on business-facing rows only.
+    for row in (review_rows or []):
+        if not isinstance(row, dict):
+            continue
+        sheet_review.append(
+            [
+                _sanitize_text(row.get("timestamp", "")),
+                _sanitize_text(row.get("source_id", "")),
+                _sanitize_text(row.get("message_hash", "")),
+                _sanitize_text(row.get("store_name", "")),
+                _sanitize_text(row.get("name", "")),
+                _sanitize_text(row.get("reason", "")),
+                _sanitize_text(row.get("message", "")),
+            ]
+        )
 
-    sheet_summary.append(["metric", "value"])
-    sheet_summary.append(["generated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-    sheet_summary.append(["bill_count", len(normalized_bills)])
-    sheet_summary.append(["item_row_count", total_item_rows])
-    sheet_summary.append(["total_amount", total_amount])
-
-    sheet_summary.freeze_panes = "A2"
-    sheet_bills.freeze_panes = "A2"
-    sheet_items.freeze_panes = "A2"
     sheet_business.freeze_panes = "A2"
+    sheet_review.freeze_panes = "A2"
 
     workbook.save(excel_path)
     return {
         "bill_count": len(normalized_bills),
         "item_count": total_item_rows,
         "total_amount": total_amount,
+        "review_count": len(review_rows or []),
         "path": str(excel_path),
     }

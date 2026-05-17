@@ -65,10 +65,10 @@ dify_use_hash_time_window: true
 dify_audit_enabled: true
 dify_audit_path: "data/dify_ingest_audit.jsonl"
 dify_response_preview_limit: 20
-dify_ingest_timeout_seconds: 30
+dify_ingest_timeout_seconds: 120
 dify_remote_enabled: true
-dify_remote_priority: true
-dify_remote_fallback_local: false
+dify_remote_priority: false
+dify_remote_fallback_local: true
 dify_remote_api_url: ""
 dify_remote_api_key: ""
 dify_remote_timeout_seconds: 30
@@ -90,3 +90,4 @@ dify_source_id: "dify"
 # 本地复核队列
 review_queue_enabled: true
 review_queue_path: "data/review_queue.jsonl"
+

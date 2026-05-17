@@ -42,7 +42,7 @@ from core.constants import (
     resolve_start_marker,
 )
 from core.output_excel import write_bill_excel_output
-from core.parser import parse_messages
+from core.parser import parse_ledger_message_multi, parse_messages
 from core.store_lookup import annotate_records_with_known_stores, build_known_store_lookup
 from setup import check_environment
 
@@ -688,7 +688,7 @@ def _load_today_seen_messages(state_path: Path, today_key: str) -> Set[str]:
         return set()
 
     try:
-        with state_path.open("r", encoding="utf-8") as f:
+        with state_path.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
     except Exception:
         return set()
@@ -754,7 +754,7 @@ def _load_hash_state(state_path: Path) -> Dict[str, int]:
         return {}
 
     try:
-        with state_path.open("r", encoding="utf-8") as f:
+        with state_path.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
     except Exception:
         return {}
@@ -801,7 +801,7 @@ def _load_daily_settlement_state(state_path: Path) -> Dict[str, Any]:
     if not state_path.exists():
         return {}
     try:
-        with state_path.open("r", encoding="utf-8") as f:
+        with state_path.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
     except Exception:
         return {}
@@ -1153,7 +1153,37 @@ def process_ledger_messages(
             "bills": [],
         }
 
+    review_rows: List[Dict[str, Any]] = []
     parsed_records = parse_messages(messages_for_parse, start_marker, end_marker=end_marker)
+    for msg in messages_for_parse:
+        if not isinstance(msg, dict):
+            continue
+        msg_text = str(msg.get("message", "") or "")
+        if not msg_text.strip():
+            continue
+        parsed_one = parse_ledger_message_multi(msg_text, start_marker, end_marker=end_marker)
+        if parsed_one:
+            continue
+        review_rows.append(
+            {
+                "timestamp": str(msg.get("timestamp", "") or ""),
+                "source_id": str(msg.get("source_id", "") or ""),
+                "message_hash": str(msg.get("message_hash", "") or ""),
+                "store_name": str(msg.get("store_name", "") or ""),
+                "name": str(msg.get("name", "") or ""),
+                "reason": "parsed_zero_records",
+                "message": msg_text,
+            }
+        )
+
+    if review_rows:
+        review_enabled = _to_bool(config.get("review_queue_enabled", True), True)
+        review_path = Path(str(config.get("review_queue_path", "data/review_queue.jsonl")))
+        if review_enabled:
+            review_path.parent.mkdir(parents=True, exist_ok=True)
+            with review_path.open("a", encoding="utf-8") as rf:
+                for row in review_rows:
+                    rf.write(json.dumps(row, ensure_ascii=False) + "\n")
     known_store_hits = annotate_records_with_known_stores(
         parsed_records,
         known_store_lookup,
@@ -1240,7 +1270,7 @@ def process_ledger_messages(
     excel_written_bills = 0
     if excel_output_enabled:
         try:
-            excel_stats = write_bill_excel_output(excel_path, bills_for_output)
+            excel_stats = write_bill_excel_output(excel_path, bills_for_output, review_rows=review_rows)
             excel_written_bills = int(excel_stats.get("bill_count", 0))
             if trace:
                 trace(
@@ -1277,6 +1307,7 @@ def process_ledger_messages(
         "known_store_hits": known_store_hits,
         "records": records_to_write,
         "bills": bills_for_output,
+        "review_count": len(review_rows),
     }
 
 
