@@ -1,6 +1,6 @@
-﻿prefix: "#璁拌处"
-record_start_marker: "璁拌处"
-record_end_marker: "缁撴潫"
+﻿prefix: "#记账"
+record_start_marker: "记账"
+record_end_marker: "结束"
 
 capture_mode: "auto"
 capture_scope: "all"

@@ -64,9 +64,25 @@ def _trim_edge(text: str) -> str:
     return TRIM_EDGE_RE.sub("", text or "")
 
 
+def _resolve_dictionary_path(path: Path) -> Path:
+    if path.exists():
+        return path
+    if path.suffix == ".json" and not path.name.endswith(".example.json"):
+        name = path.name
+        if name.endswith(".local.json"):
+            fallback_name = name[: -len(".local.json")] + ".example.json"
+        else:
+            fallback_name = path.stem + ".example.json"
+        fallback = path.with_name(fallback_name)
+        if fallback.exists():
+            return fallback
+    return path
+
+
 def _load_json_dict(path: Path) -> Dict[str, Any]:
+    resolved = _resolve_dictionary_path(path)
     try:
-        with path.open("r", encoding="utf-8-sig") as f:
+        with resolved.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
         if isinstance(payload, dict):
             return payload

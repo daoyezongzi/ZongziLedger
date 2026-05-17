@@ -131,15 +131,26 @@ def build_known_store_lookup(
         return lookup
 
     path = Path(path_text)
-    if not path.exists():
+    resolved_path = path
+    if not resolved_path.exists() and resolved_path.suffix == ".json" and not resolved_path.name.endswith(".example.json"):
+        fallback_name = resolved_path.name
+        if fallback_name.endswith(".local.json"):
+            fallback_name = fallback_name[: -len(".local.json")] + ".example.json"
+        else:
+            fallback_name = resolved_path.stem + ".example.json"
+        fallback_path = resolved_path.with_name(fallback_name)
+        if fallback_path.exists():
+            resolved_path = fallback_path
+    if not resolved_path.exists():
         _trace(trace, f"[STORE] known store lookup enabled, but file not found: {path}")
         return lookup
 
+    lookup["path"] = str(resolved_path)
     try:
-        with path.open("r", encoding="utf-8") as f:
+        with resolved_path.open("r", encoding="utf-8-sig") as f:
             payload = json.load(f)
     except Exception as exc:
-        _trace(trace, f"[STORE] failed to load known store file: {path}, error={exc}")
+        _trace(trace, f"[STORE] failed to load known store file: {resolved_path}, error={exc}")
         return lookup
 
     alias_pairs: List[Tuple[str, str]] = []
@@ -163,7 +174,7 @@ def build_known_store_lookup(
     alias_pairs.sort(key=lambda x: (-len(x[0]), x[0], x[1]))
     lookup["alias_pairs"] = alias_pairs
     lookup["stores_count"] = len(store_names)
-    _trace(trace, f"[STORE] loaded known stores: stores={len(store_names)}, aliases={len(alias_pairs)}, path={path}")
+    _trace(trace, f"[STORE] loaded known stores: stores={len(store_names)}, aliases={len(alias_pairs)}, path={resolved_path}")
     return lookup
 
 
@@ -203,6 +214,15 @@ def annotate_records_with_known_stores(
 
     hit_count = 0
     for record in records:
+        explicit_store_name = str(record.get("known_store", "") or record.get("store_name", "") or "")
+        if explicit_store_name:
+            matches = lookup_known_stores(explicit_store_name, lookup, max_matches=max_matches)
+            if matches:
+                hit_count += 1
+                record["known_store"] = matches[0]
+                record["known_store_candidates"] = matches
+                continue
+
         raw_message = str(record.get("raw_message", "") or "")
         item = str(record.get("item", "") or "")
         matches = lookup_known_stores(f"{raw_message}\n{item}", lookup, max_matches=max_matches)

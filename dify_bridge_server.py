@@ -194,6 +194,7 @@ def _build_message_item(item: Any, default_source_id: str, default_timestamp: st
     message_hash = ""
     message_captured_at = ""
     name = ""
+    store_name = ""
 
     if isinstance(item, dict):
         source_id = _safe_text(item.get("source_id", default_source_id)) or default_source_id
@@ -204,6 +205,7 @@ def _build_message_item(item: Any, default_source_id: str, default_timestamp: st
             name = _safe_text(item.get(key, ""))
             if name:
                 break
+        store_name = _safe_text(item.get("store_name", ""))
 
     output: Dict[str, Any] = {
         "message": message_text,
@@ -225,6 +227,8 @@ def _build_message_item(item: Any, default_source_id: str, default_timestamp: st
         output["message_captured_at"] = message_captured_at
     if name:
         output["name"] = name
+    if store_name:
+        output["store_name"] = store_name
     return output
 
 
@@ -820,36 +824,42 @@ class DifyBridgeHandler(BaseHTTPRequestHandler):
                     trace(f"[DIFY] remote call failed: {exc}")
 
                 if route != "remote" and remote_priority:
-                    route = "remote-failed"
-                    route_info = {
-                        "mode": route,
-                        "remote_enabled": remote_enabled,
-                        "remote_priority": remote_priority,
-                        "remote_fallback_local": remote_fallback_local,
-                        "remote_error": remote_error or "unknown remote error",
-                        "workflow_run_id": workflow_run_id,
-                        "normalized_count": normalized_count,
-                    }
-                    if remote_normalization:
-                        route_info["normalization"] = _to_json_safe(remote_normalization)
-                    trace(
-                        "[DIFY] ingest "
-                        f"route={route}, remote_error={route_info['remote_error']}, "
-                        f"workflow_run_id={workflow_run_id}, normalized_count={normalized_count}"
-                    )
-                    self._write_json(
-                        HTTPStatus.BAD_GATEWAY,
-                        {
-                            "ok": False,
-                            "error": f"remote-priority failed: {remote_error or 'unknown remote error'}",
-                            "service": SERVICE_NAME,
-                            "route": route_info,
+                    if remote_fallback_local:
+                        trace(
+                            "[DIFY] remote-priority failed, falling back to local processing "
+                            f"because remote_fallback_local=true: {remote_error or 'unknown remote error'}"
+                        )
+                    else:
+                        route = "remote-failed"
+                        route_info = {
+                            "mode": route,
+                            "remote_enabled": remote_enabled,
+                            "remote_priority": remote_priority,
+                            "remote_fallback_local": remote_fallback_local,
+                            "remote_error": remote_error or "unknown remote error",
                             "workflow_run_id": workflow_run_id,
                             "normalized_count": normalized_count,
-                            "log_path": str(log_path),
-                        },
-                    )
-                    return
+                        }
+                        if remote_normalization:
+                            route_info["normalization"] = _to_json_safe(remote_normalization)
+                        trace(
+                            "[DIFY] ingest "
+                            f"route={route}, remote_error={route_info['remote_error']}, "
+                            f"workflow_run_id={workflow_run_id}, normalized_count={normalized_count}"
+                        )
+                        self._write_json(
+                            HTTPStatus.BAD_GATEWAY,
+                            {
+                                "ok": False,
+                                "error": f"remote-priority failed: {remote_error or 'unknown remote error'}",
+                                "service": SERVICE_NAME,
+                                "route": route_info,
+                                "workflow_run_id": workflow_run_id,
+                                "normalized_count": normalized_count,
+                                "log_path": str(log_path),
+                            },
+                        )
+                        return
 
             if not selected_messages:
                 local_messages_key = _safe_text(
