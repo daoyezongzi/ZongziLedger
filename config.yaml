@@ -58,6 +58,8 @@ wetrace_dispatch_mode: "dify"
 # 密钥字段（dify_remote_api_key / dify_remote_api_url）建议放在 .env
 dify_api_host: "127.0.0.1"
 dify_api_port: 8787
+# 留空时仅允许回环客户端；配置后要求 Authorization: Bearer <token>
+dify_api_token: ""
 dify_ingest_url: ""
 dify_apply_capture_scope: false
 dify_use_daily_settlement: false
@@ -90,4 +92,3 @@ dify_source_id: "dify"
 # 本地复核队列
 review_queue_enabled: true
 review_queue_path: "data/review_queue.jsonl"
-

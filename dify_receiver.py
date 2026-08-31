@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from core.contracts import ensure_normalized_message_contract
 from core.constants import (
+    DEFAULT_DIFY_API_TOKEN,
     DEFAULT_CONFIG_PATH,
     DEFAULT_DATA_PATH,
     DEFAULT_DOTENV_PATH,
@@ -24,6 +25,7 @@ from core.constants import (
     resolve_end_marker,
     resolve_start_marker,
 )
+from core.security import normalize_loopback_bind_host, request_is_authorized
 from core.parser import parse_ledger_message_multi
 from core.store_lookup import annotate_records_with_known_stores, build_known_store_lookup, lookup_known_stores
 from main import (
@@ -840,6 +842,7 @@ class DifyReceiverServer(ThreadingHTTPServer):
     review_queue_path: Path
     review_queue_enabled: bool
     default_source_id: str
+    api_token: str
     process_lock: threading.Lock
 
 
@@ -880,7 +883,18 @@ class DifyReceiverHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
             return
 
-        max_bytes = int(getattr(self.server, "max_payload_bytes", DEFAULT_DIFY_MAX_PAYLOAD_BYTES))
+        if not request_is_authorized(
+            self.headers,
+            self.client_address,
+            getattr(self.server, "api_token", DEFAULT_DIFY_API_TOKEN),
+        ):
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+            return
+
+        max_bytes = min(
+            DEFAULT_DIFY_MAX_PAYLOAD_BYTES,
+            max(1024, int(getattr(self.server, "max_payload_bytes", DEFAULT_DIFY_MAX_PAYLOAD_BYTES))),
+        )
         content_length = self.headers.get("Content-Length", "").strip()
         try:
             body_len = int(content_length) if content_length else 0
@@ -896,7 +910,14 @@ class DifyReceiverHandler(BaseHTTPRequestHandler):
             )
             return
 
+        try:
+            self.connection.settimeout(10)
+        except OSError:
+            pass
         raw_body = self.rfile.read(body_len)
+        if len(raw_body) != body_len:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "incomplete_body"})
+            return
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except Exception:
@@ -983,7 +1004,15 @@ def main() -> None:
 
     ensure_csv_file(Path(str(config.get("data_path", DEFAULT_DATA_PATH))))
 
-    listen_host = _sanitize_csv_text(config.get("dify_listen_host", DEFAULT_DIFY_LISTEN_HOST)) or DEFAULT_DIFY_LISTEN_HOST
+    try:
+        listen_host = normalize_loopback_bind_host(
+            _sanitize_csv_text(config.get("dify_listen_host", DEFAULT_DIFY_LISTEN_HOST))
+            or DEFAULT_DIFY_LISTEN_HOST,
+            default=DEFAULT_DIFY_LISTEN_HOST,
+        )
+    except ValueError as exc:
+        print(f"[错误] 拒绝非回环监听地址：{type(exc).__name__}")
+        return
     listen_port = _to_int(config.get("dify_listen_port", DEFAULT_DIFY_LISTEN_PORT), DEFAULT_DIFY_LISTEN_PORT, minimum=1)
     ingest_path = _sanitize_csv_text(config.get("dify_ingest_path", DEFAULT_DIFY_INGEST_PATH)) or DEFAULT_DIFY_INGEST_PATH
     health_path = _sanitize_csv_text(config.get("dify_health_path", DEFAULT_DIFY_HEALTH_PATH)) or DEFAULT_DIFY_HEALTH_PATH
@@ -1005,6 +1034,7 @@ def main() -> None:
     server.review_queue_path = review_queue_path
     server.review_queue_enabled = review_queue_enabled
     server.default_source_id = default_source_id
+    server.api_token = _sanitize_csv_text(config.get("dify_api_token", DEFAULT_DIFY_API_TOKEN))
     server.process_lock = threading.Lock()
 
     print(f"[日志] 抓取日志文件：{log_path}")

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import ipaddress
+import urllib.parse
+import urllib.request
 import re
 import traceback
 import urllib.error
-import urllib.request
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +17,7 @@ from core.constants import (
     DEFAULT_END_MARKER,
     DEFAULT_DIFY_API_HOST,
     DEFAULT_DIFY_API_PORT,
+    DEFAULT_DIFY_API_TOKEN,
     DEFAULT_DIFY_AUDIT_ENABLED,
     DEFAULT_DIFY_AUDIT_PATH,
     DEFAULT_DIFY_INGEST_PATH,
@@ -31,9 +34,16 @@ from core.constants import (
     DEFAULT_DIFY_REMOTE_USER_AGENT,
     DEFAULT_DIFY_REMOTE_USER,
     DEFAULT_DIFY_RESPONSE_PREVIEW_LIMIT,
+    DEFAULT_DIFY_MAX_PAYLOAD_BYTES,
+    DEFAULT_DIFY_MAX_REMOTE_RESPONSE_BYTES,
+    DEFAULT_DIFY_MAX_MESSAGES,
+    DEFAULT_DIFY_MAX_MESSAGE_CHARS,
+    DEFAULT_DIFY_MAX_AUDIT_RECORDS,
+    DEFAULT_DIFY_MAX_AUDIT_BYTES,
     resolve_end_marker,
     resolve_start_marker,
 )
+from core.security import normalize_loopback_bind_host, request_is_authorized
 from core.parser import parse_ledger_message_multi
 from main import (
     init_run_logger,
@@ -93,6 +103,50 @@ def _to_int(value: Any, default: int, minimum: Optional[int] = None) -> int:
     if minimum is not None and parsed < minimum:
         return minimum
     return parsed
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    return min(maximum, max(minimum, _to_int(value, default, minimum=minimum)))
+
+
+def _validate_remote_url(url: str) -> None:
+    parsed = urllib.parse.urlsplit(str(url or "").strip())
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("remote API URL must use http or https")
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        raise ValueError("remote API URL must not contain credentials, query, or fragment")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("remote API URL has an invalid port") from exc
+    hostname = parsed.hostname.casefold().rstrip(".")
+    blocked_names = {
+        "localhost",
+        "localhost.localdomain",
+        "metadata",
+        "metadata.google.internal",
+    }
+    if hostname in blocked_names or any(
+        hostname.endswith(suffix)
+        for suffix in (".local", ".internal", ".intranet", ".home.arpa", ".nip.io", ".sslip.io")
+    ):
+        raise ValueError("remote API URL points to a non-public host")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        raise ValueError("remote API URL points to a non-public address")
+    if parsed.scheme.casefold() == "http" and (address is None or not address.is_loopback):
+        raise ValueError("remote API URL must use HTTPS unless it targets loopback")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler())
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -298,6 +352,16 @@ def _append_message_items(
     return 0
 
 
+def _enforce_message_limits(messages: List[Dict[str, Any]]) -> None:
+    if len(messages) > DEFAULT_DIFY_MAX_MESSAGES:
+        raise ValueError(f"message count exceeds limit ({DEFAULT_DIFY_MAX_MESSAGES})")
+    for message in messages:
+        for key in ("message", "raw_message", "source_id", "name", "store_name"):
+            value = message.get(key, "")
+            if isinstance(value, str) and len(value) > DEFAULT_DIFY_MAX_MESSAGE_CHARS:
+                raise ValueError(f"message field exceeds limit ({DEFAULT_DIFY_MAX_MESSAGE_CHARS} characters)")
+
+
 def build_messages_from_payload(
     payload: Dict[str, Any],
     *,
@@ -346,18 +410,24 @@ def build_messages_from_payload(
         )
 
     if messages:
+        _enforce_message_limits(messages)
         return messages
 
     single_item = _build_message_item(payload, default_source_id=default_source_id, default_timestamp=default_timestamp)
     if single_item is not None:
         messages.append(single_item)
+    _enforce_message_limits(messages)
     return messages
 
 
 def _append_audit_record(audit_path: Path, payload: Dict[str, Any]) -> None:
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     existing_records: List[Dict[str, Any]] = []
-    if audit_path.exists():
+    try:
+        audit_too_large = audit_path.exists() and audit_path.stat().st_size > DEFAULT_DIFY_MAX_AUDIT_BYTES
+    except OSError:
+        audit_too_large = True
+    if audit_path.exists() and not audit_too_large:
         try:
             with audit_path.open("r", encoding="utf-8-sig") as f:
                 previous_payload = json.load(f)
@@ -379,35 +449,60 @@ def _append_audit_record(audit_path: Path, payload: Dict[str, Any]) -> None:
             except Exception:
                 existing_records = []
 
+    existing_records = existing_records[-DEFAULT_DIFY_MAX_AUDIT_RECORDS + 1 :]
     existing_records.append(payload)
     output = {
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "records": existing_records,
     }
-    with audit_path.open("w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
+    encoded = json.dumps(output, ensure_ascii=False, indent=2).encode("utf-8")
+    while len(encoded) > DEFAULT_DIFY_MAX_AUDIT_BYTES and len(existing_records) > 1:
+        existing_records.pop(0)
+        output["records"] = existing_records
+        encoded = json.dumps(output, ensure_ascii=False, indent=2).encode("utf-8")
+    temp_path = audit_path.with_name(f".{audit_path.name}.tmp")
+    temp_path.write_bytes(encoded)
+    temp_path.replace(audit_path)
 
 
 def _http_post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout_seconds: int) -> Dict[str, Any]:
+    _validate_remote_url(url)
     req = urllib.request.Request(
         url,
         data=_json_compact(payload).encode("utf-8"),
         headers=headers,
         method="POST",
     )
+
+    def read_limited(stream: Any) -> bytes:
+        content_length = stream.headers.get("Content-Length") if hasattr(stream, "headers") else None
+        if content_length:
+            try:
+                if int(content_length) > DEFAULT_DIFY_MAX_REMOTE_RESPONSE_BYTES:
+                    raise RuntimeError("remote response exceeds the maximum allowed size")
+            except ValueError as exc:
+                raise RuntimeError("remote response has an invalid content length") from exc
+        body = stream.read(DEFAULT_DIFY_MAX_REMOTE_RESPONSE_BYTES + 1)
+        if len(body) > DEFAULT_DIFY_MAX_REMOTE_RESPONSE_BYTES:
+            raise RuntimeError("remote response exceeds the maximum allowed size")
+        return body
+
     try:
-        with urllib.request.urlopen(req, timeout=max(1, int(timeout_seconds))) as resp:
-            body_text = resp.read().decode("utf-8", errors="replace")
+        with _NO_REDIRECT_OPENER.open(req, timeout=max(1, int(timeout_seconds))) as resp:
+            body_text = read_limited(resp).decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        body_text = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code}: {body_text[:500]}") from exc
+        try:
+            read_limited(exc)
+        except RuntimeError:
+            pass
+        raise RuntimeError(f"remote HTTP request failed ({exc.code})") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"URL error: {exc}") from exc
+        raise RuntimeError(f"remote request failed ({type(exc.reason).__name__})") from exc
 
     try:
         parsed = json.loads(body_text)
     except Exception as exc:
-        raise RuntimeError(f"remote response is not valid JSON: {body_text[:500]}") from exc
+        raise RuntimeError("remote response is not valid JSON") from exc
     if not isinstance(parsed, dict):
         raise RuntimeError("remote response root must be JSON object")
     return parsed
@@ -700,18 +795,28 @@ class DifyBridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_payload(self) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def _read_payload(self, config: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         content_length = self.headers.get("Content-Length")
         if content_length is None:
             return None, "missing Content-Length"
         try:
             size = int(content_length)
-        except ValueError:
+        except (TypeError, ValueError):
             return None, "invalid Content-Length"
         if size <= 0:
             return None, "empty request body"
+        max_payload_bytes = _bounded_int(
+            config.get("dify_max_payload_bytes", DEFAULT_DIFY_MAX_PAYLOAD_BYTES),
+            DEFAULT_DIFY_MAX_PAYLOAD_BYTES,
+            minimum=1024,
+            maximum=DEFAULT_DIFY_MAX_PAYLOAD_BYTES,
+        )
+        if size > max_payload_bytes:
+            return None, f"payload exceeds limit ({max_payload_bytes} bytes)"
 
         raw = self.rfile.read(size)
+        if len(raw) != size:
+            return None, "incomplete request body"
         try:
             parsed = json.loads(raw.decode("utf-8"))
         except Exception:
@@ -719,6 +824,10 @@ class DifyBridgeHandler(BaseHTTPRequestHandler):
         if not isinstance(parsed, dict):
             return None, "request body must be JSON object"
         return parsed, None
+
+    def _is_authorized(self, config: Dict[str, Any]) -> bool:
+        expected = config.get("dify_api_token", DEFAULT_DIFY_API_TOKEN)
+        return request_is_authorized(self.headers, self.client_address, expected)
 
     def do_GET(self) -> None:  # noqa: N802
         request_path = _normalize_path(self.path.split("?", 1)[0], "/")
@@ -748,18 +857,26 @@ class DifyBridgeHandler(BaseHTTPRequestHandler):
             )
             return
 
-        payload, err = self._read_payload()
-        if err is not None or payload is None:
-            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": err or "bad request"})
-            return
-
         try:
             config, dotenv_applied = load_runtime_config()
         except Exception as exc:
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"ok": False, "error": f"failed to load config: {exc}"},
+                {"ok": False, "error": f"failed to load config: {type(exc).__name__}"},
             )
+            return
+
+        if not self._is_authorized(config):
+            self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+            return
+
+        try:
+            self.connection.settimeout(10)
+        except OSError:
+            pass
+        payload, err = self._read_payload(config)
+        if err is not None or payload is None:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": err or "bad request"})
             return
 
         logger, log_path = init_run_logger(config)
@@ -900,10 +1017,11 @@ class DifyBridgeHandler(BaseHTTPRequestHandler):
             )
             result = process_ledger_messages(selected_messages, config, trace=trace, workflow="dify")
 
-            preview_limit = _to_int(
+            preview_limit = _bounded_int(
                 config.get("dify_response_preview_limit", DEFAULT_DIFY_RESPONSE_PREVIEW_LIMIT),
                 DEFAULT_DIFY_RESPONSE_PREVIEW_LIMIT,
                 minimum=0,
+                maximum=100,
             )
             preview_records = list(result.get("records", []))
             if preview_limit >= 0:
@@ -999,12 +1117,13 @@ def run_server() -> None:
     health_path = "/health"
     try:
         config, _ = load_runtime_config()
-        host = _safe_text(config.get("dify_api_host", host)) or host
+        host = normalize_loopback_bind_host(config.get("dify_api_host", host), default=host)
         port = _to_int(config.get("dify_api_port", port), port, minimum=1)
         ingest_path = _normalize_path(str(config.get("dify_ingest_path", ingest_path)), DEFAULT_DIFY_INGEST_PATH)
         health_path = _normalize_path(str(config.get("dify_health_path", health_path)), "/health")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[DIFY] refusing to start with unsafe configuration: {type(exc).__name__}")
+        return
 
     server = _ReusableThreadingHTTPServer((host, port), DifyBridgeHandler)
     server.ingest_path = ingest_path

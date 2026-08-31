@@ -7,7 +7,12 @@ from typing import Any, Dict, List
 
 
 def _sanitize_text(value: Any) -> str:
-    return str(value or "").strip()
+    text = str(value or "").strip()
+    # Excel interprets leading formula characters in text cells. Prefixing
+    # with an apostrophe keeps untrusted review/business strings literal.
+    if text.startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
 
 
 def _to_float(value: Any) -> float:

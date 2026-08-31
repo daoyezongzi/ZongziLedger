@@ -73,6 +73,7 @@ run_ingest_wetrace.bat
 
 - `DIFY_REMOTE_API_URL`
 - `DIFY_REMOTE_API_KEY`
+- `DIFY_API_TOKEN`（可选；设置后本地 bridge/receiver 要求 `Authorization: Bearer ...`）
 
 并确认：
 
@@ -80,6 +81,11 @@ run_ingest_wetrace.bat
 - `DIFY_REMOTE_ENABLED=true`
 - `DIFY_REMOTE_PRIORITY=true`
 - `DIFY_REMOTE_FALLBACK_LOCAL=false`（远端失败即失败，避免本地兜底导致口径漂移）
+
+安全边界：bridge 和旧 receiver 均只允许绑定回环地址（`127.0.0.1`/`::1`）。未设置
+`DIFY_API_TOKEN` 时仅接受本机回环请求；需要跨进程/跨主机调用时先配置随机长令牌，
+并通过受控的 TLS 反向代理暴露服务。远端 Dify URL 只允许 HTTPS，禁止 URL 中携带凭据、
+query 或 fragment。
 
 ## 5. 运行入口
 
